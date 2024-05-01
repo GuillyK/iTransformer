@@ -39,3 +39,8 @@ def metric(pred, true):
     mspe = MSPE(pred, true)
 
     return mae, mse, rmse, mape, mspe
+
+
+# Metrics for time series classification
+def accuracy(pred, true):
+    return np.mean((pred == true).astype(int))

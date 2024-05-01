@@ -651,7 +651,7 @@ class Dataset_Crop(Dataset):
         root_path,
         flag="train",
         size=None,
-        features="S",
+        features="M",
         data_path="noordoostpolder_itransformer.csv",
         target="class_name_late",
         scale=True,
@@ -693,31 +693,32 @@ class Dataset_Crop(Dataset):
         cols = list(df_raw.columns)
         cols.remove(self.target)
         cols.remove("date")
+        cols.remove("FOI_ID_LEVERANCIER")
         groups = df_raw.groupby("FOI_ID_LEVERANCIER")
         print("these are the groups\n", groups)
-        df_raw = df_raw[["date"] + cols + [self.target]]
+        df_raw = df_raw[["date"] + ["FOI_ID_LEVERANCIER"] + cols + [self.target]]
 
         num_train = int(len(groups) * 0.7)
         num_test = int(len(groups) * 0.2)
         num_vali = len(groups) - num_train - num_test
 
-        # border1s = [
-        #     0,
-        #     num_train - self.seq_len,
-        #     len(groups) - num_test - self.seq_len,
-        # ]
-        # border2s = [num_train, num_train + num_vali, len(groups)]
-        # print(border1s, border2s)
-        # border1 = border1s[self.set_type]
-        # border2 = border2s[self.set_type]
-        # print(border1, border2)
+        # Borders to later get the the number of groups needed for training, validation, and testing
+        border1s = [
+            0,
+            num_train - self.seq_len,
+            len(groups) - num_test - self.seq_len,
+        ]
+        border2s = [num_train, num_train + num_vali, len(groups)]
+        # Set_type for train, val, and test
+        border1 = border1s[self.set_type]
+        border2 = border2s[self.set_type]
 
         # Create a list of group keys
         group_keys = groups.groups.keys()
 
         # Split the keys into training, validation, and testing keys
         train_keys = list(group_keys)[:num_train]
-        test_keys = list(group_keys)[num_train: num_train+num_test]
+        test_keys = list(group_keys)[num_train : num_train + num_test]
         vali_keys = list(group_keys)[-num_vali:]
 
         # Create training, validation, and testing groups
@@ -725,35 +726,24 @@ class Dataset_Crop(Dataset):
         test_groups = groups.filter(lambda x: x.name in test_keys)
         vali_groups = groups.filter(lambda x: x.name in vali_keys)
 
-        print("training",train_groups.head())
+        cols_data = df_raw.columns[1:]
+        df_data = df_raw[cols_data]
+        if self.scale:
+            self.scaler.fit(df_data.values)
+            data = self.scaler.transform(df_data.values)
+        else:
+            data = df_data.values
+
+        # print("training", train_groups.head())
         for group_df in [train_groups, vali_groups, test_groups]:
             group_df = group_df[["date"] + cols + [self.target]]
-            print("group df",group_df.head())
-            exit()
+            print("group df", group_df.head())
             if self.features == "M" or self.features == "MS":
                 cols_data = group_df.columns[1:]
                 df_data = group_df[cols_data]
             elif self.features == "S":
                 df_data = group_df[[self.target]]
 
-            if self.scale:
-                self.scaler.fit(df_data.values)
-                data = self.scaler.transform(df_data.values)
-            else:
-                data = df_data.values
-
-        # if self.features == "M" or self.features == "MS":
-        #     cols_data = df_raw.columns[1:]
-        #     df_data = df_raw[cols_data]
-        # elif self.features == "S":
-        #     df_data = df_raw[[self.target]]
-
-        # if self.scale:
-        #     train_data = df_data[border1s[0] : border2s[0]]
-        #     self.scaler.fit(train_data.values)
-        #     data = self.scaler.transform(df_data.values)
-        # else:
-        #     data = df_data.values
 
         df_stamp = df_raw[["date"]][border1:border2]
         df_stamp["date"] = pd.to_datetime(df_stamp.date)
@@ -775,8 +765,8 @@ class Dataset_Crop(Dataset):
             )
             data_stamp = data_stamp.transpose(1, 0)
 
-        self.data_x = data[border1:border2]
-        self.data_y = data[border1:border2]
+        self.data_x = list(groups)[border1:border2]
+        self.data_y = list(groups)[border1:border2]
         self.data_stamp = data_stamp
 
     def __getitem__(self, index):
