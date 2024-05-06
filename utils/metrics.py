@@ -1,13 +1,25 @@
 import numpy as np
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    ConfusionMatrixDisplay,
+    precision_score,
+    recall_score,
+    f1_score,
+)
 
 
 def RSE(pred, true):
-    return np.sqrt(np.sum((true - pred) ** 2)) / np.sqrt(np.sum((true - true.mean()) ** 2))
+    return np.sqrt(np.sum((true - pred) ** 2)) / np.sqrt(
+        np.sum((true - true.mean()) ** 2)
+    )
 
 
 def CORR(pred, true):
     u = ((true - true.mean(0)) * (pred - pred.mean(0))).sum(0)
-    d = np.sqrt(((true - true.mean(0)) ** 2 * (pred - pred.mean(0)) ** 2).sum(0))
+    d = np.sqrt(
+        ((true - true.mean(0)) ** 2 * (pred - pred.mean(0)) ** 2).sum(0)
+    )
     return (u / d).mean(-1)
 
 
@@ -38,9 +50,37 @@ def metric(pred, true):
     mape = MAPE(pred, true)
     mspe = MSPE(pred, true)
 
-    return mae, mse, rmse, mape, mspe
+    acc = accuracy(pred, true)
+    conf_matrix = confusion_matrix_score(pred, true)
+    prec = precision(pred, true)
+    rec = recall(pred, true)
+    F1 = f1(pred, true)
+
+    return acc, conf_matrix, prec, rec, F1
 
 
 # Metrics for time series classification
 def accuracy(pred, true):
-    return np.mean((pred == true).astype(int))
+    return accuracy_score(true, pred)
+
+
+def confusion_matrix_score(pred, true):
+    return confusion_matrix(true, pred)
+
+
+def precision(pred, true):
+    return precision_score(true, pred)
+
+
+def recall(pred, true):
+    return recall_score(true, pred)
+
+
+def f1(pred, true):
+    return f1_score(true, pred)
+
+
+# print(confusion_matrix(y_test, predictions))
+
+# # plot_confusion_matrix function is used to visualize the confusion matrix
+# plot_confusion_matrix(classifier, X_test, y_test)

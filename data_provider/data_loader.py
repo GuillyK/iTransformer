@@ -671,7 +671,7 @@ class Dataset_Crop(Dataset):
         # init
         assert flag in ["train", "test", "val"]
         type_map = {"train": 0, "val": 1, "test": 2}
-        self.set_type = type_map[flag]
+        self.split_id = type_map[flag]
 
         self.features = features
         self.target = target
@@ -691,12 +691,20 @@ class Dataset_Crop(Dataset):
         df_raw.columns: ['date', ...(other features), target feature]
         """
         cols = list(df_raw.columns)
-        cols.remove(self.target)
+        # target is columns that start with class_name_late (one hot encoding)
+        target = df_raw.columns.str.startswith("class_name_late")
+        print("TARGET", target)
+        print(list(df_raw.columns[target]))
+        self.target = list(df_raw.columns[target])
+        # cols.remove(self.target)
+        cols = [x for x in cols if x not in self.target]
         cols.remove("date")
         cols.remove("FOI_ID_LEVERANCIER")
         groups = df_raw.groupby("FOI_ID_LEVERANCIER")
         print("these are the groups\n", groups)
-        df_raw = df_raw[["date"] + ["FOI_ID_LEVERANCIER"] + cols + [self.target]]
+        df_raw = df_raw[
+            ["date"] + ["FOI_ID_LEVERANCIER"] + cols + self.target
+        ]
 
         num_train = int(len(groups) * 0.7)
         num_test = int(len(groups) * 0.2)
@@ -709,9 +717,9 @@ class Dataset_Crop(Dataset):
             len(groups) - num_test - self.seq_len,
         ]
         border2s = [num_train, num_train + num_vali, len(groups)]
-        # Set_type for train, val, and test
-        border1 = border1s[self.set_type]
-        border2 = border2s[self.set_type]
+        # Border split for train, val, and test
+        border1 = border1s[self.split_id]
+        border2 = border2s[self.split_id]
 
         # Create a list of group keys
         group_keys = groups.groups.keys()
@@ -725,27 +733,30 @@ class Dataset_Crop(Dataset):
         train_groups = groups.filter(lambda x: x.name in train_keys)
         test_groups = groups.filter(lambda x: x.name in test_keys)
         vali_groups = groups.filter(lambda x: x.name in vali_keys)
+        list_of_groups = [train_groups, test_groups, vali_groups]
 
-        cols_data = df_raw.columns[1:]
-        df_data = df_raw[cols_data]
+        amount_features = len(cols)
+        cols_data = df_raw.columns[1 : amount_features + 1]
+        cur_group = list_of_groups[self.split_id]
+        df_data = cur_group[cols_data]
+
         if self.scale:
             self.scaler.fit(df_data.values)
             data = self.scaler.transform(df_data.values)
         else:
             data = df_data.values
 
-        # print("training", train_groups.head())
-        for group_df in [train_groups, vali_groups, test_groups]:
-            group_df = group_df[["date"] + cols + [self.target]]
-            print("group df", group_df.head())
-            if self.features == "M" or self.features == "MS":
-                cols_data = group_df.columns[1:]
-                df_data = group_df[cols_data]
-            elif self.features == "S":
-                df_data = group_df[[self.target]]
+        # # print("training", train_groups.head())
+        # for group_df in [train_groups, vali_groups, test_groups]:
+        #     group_df = group_df[["date"] + cols + [self.target]]
+        #     print("group df", group_df.head())
+        #     if self.features == "M" or self.features == "MS":
+        #         cols_data = group_df.columns[1:]
+        #         df_data = group_df[cols_data]
+        #     elif self.features == "S":
+        #         df_data = group_df[[self.target]]
 
-
-        df_stamp = df_raw[["date"]][border1:border2]
+        df_stamp = cur_group[["date"]]
         df_stamp["date"] = pd.to_datetime(df_stamp.date)
         if self.timeenc == 0:
             df_stamp["month"] = df_stamp.date.apply(
@@ -765,9 +776,10 @@ class Dataset_Crop(Dataset):
             )
             data_stamp = data_stamp.transpose(1, 0)
 
-        self.data_x = list(groups)[border1:border2]
-        self.data_y = list(groups)[border1:border2]
+        self.data_x = cur_group[cols_data].values.astype(np.float64)
+        self.data_y = cur_group[self.target].values.astype(np.float64)
         self.data_stamp = data_stamp
+        print("These are the target values", self.target, cur_group[self.target])
 
     def __getitem__(self, index):
         s_begin = index
@@ -778,12 +790,14 @@ class Dataset_Crop(Dataset):
         seq_x = self.data_x[s_begin:s_end]
         seq_y = self.data_y[r_begin:r_end]
         seq_x_mark = self.data_stamp[s_begin:s_end]
-        seq_y_mark = self.data_stamp[r_begin:r_end]
-
+        seq_y_mark = self.data_stamp[index]
+        seq_y = self.data_y[index]
+        # print(seq_y, self.data_y, self.data_y.shape, self.data_x.shape)
+        # exit()
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
     def __len__(self):
-        return len(self.data_x) - self.seq_len - self.pred_len + 1
+        return len(self.data_x) - self.seq_len
 
     def inverse_transform(self, data):
         return self.scaler.inverse_transform(data)

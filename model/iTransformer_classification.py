@@ -50,47 +50,14 @@ class Model(nn.Module):
             ],
             norm_layer=torch.nn.LayerNorm(configs.d_model),
         )
+        self.fc = nn.Linear(7, 1)
         self.classifier = nn.Linear(
             configs.d_model, self.num_classes, bias=True
         )
 
-    # def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
-    #     if self.use_norm:
-    #         # Normalization from Non-stationary Transformer
-    #         means = x_enc.mean(1, keepdim=True).detach()
-    #         x_enc = x_enc - means
-    #         stdev = torch.sqrt(torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5)
-    #         x_enc /= stdev
-
-    #     _, _, N = x_enc.shape # B L N
-    #     # B: batch_size;    E: d_model;
-    #     # L: seq_len;       S: pred_len;
-    #     # N: number of variate (tokens), can also includes covariates
-
-    #     # Embedding
-    #     # B L N -> B N E                (B L N -> B L E in the vanilla Transformer)
-    #     enc_out = self.enc_embedding(x_enc, x_mark_enc) # covariates (e.g timestamp) can be also embedded as tokens
-
-    #     # B N E -> B N E                (B L E -> B L E in the vanilla Transformer)
-    #     # the dimensions of embedded time series has been inverted, and then processed by native attn, layernorm and ffn modules
-    #     enc_out, attns = self.encoder(enc_out, attn_mask=None)
-
-    #     # B N E -> B N S -> B S N
-    #     dec_out = self.projector(enc_out).permute(0, 2, 1)[:, :, :N] # filter the covariates
-
-    #     if self.use_norm:
-    #         # De-Normalization from Non-stationary Transformer
-    #         dec_out = dec_out * (stdev[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
-    #         dec_out = dec_out + (means[:, 0, :].unsqueeze(1).repeat(1, self.pred_len, 1))
-
-    #     return dec_out
-
-    # def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
-    #     dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
-    #     return dec_out[:, -self.pred_len:, :]  # [B, L, D]
-
-    def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
+    def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
         if self.use_norm:
+            # Normalization from Non-stationary Transformer
             means = x_enc.mean(1, keepdim=True).detach()
             x_enc = x_enc - means
             stdev = torch.sqrt(
@@ -98,15 +65,65 @@ class Model(nn.Module):
             )
             x_enc /= stdev
 
-        _, _, N = x_enc.shape
+        _, _, N = x_enc.shape  # B L N
+        # B: batch_size;    E: d_model;
+        # L: seq_len;       S: pred_len;
+        # N: number of variate (tokens), can also includes covariates
 
-        enc_out = self.enc_embedding(x_enc, x_mark_enc)
+        # Embedding
+        # B L N -> B N E                (B L N -> B L E in the vanilla Transformer)
+        enc_out = self.enc_embedding(
+            x_enc, x_mark_enc
+        )  # covariates (e.g timestamp) can be also embedded as tokens
+
+        # B N E -> B N E                (B L E -> B L E in the vanilla Transformer)
+        # the dimensions of embedded time series has been inverted, and then processed by native attn, layernorm and ffn modules
         enc_out, attns = self.encoder(enc_out, attn_mask=None)
 
-        # Apply the classifier to the last output of the encoder
-        class_scores = self.classifier(enc_out[:, -1, :])
+        # B N E -> B N S -> B S N
+        dec_out = self.classifier(enc_out).permute(0, 2, 1)[
+            :, :, :N
+        ]  # filter the covariates
 
-        # Apply softmax to convert raw scores into probabilities
-        class_probs = F.softmax(class_scores, dim=-1)
+        if self.use_norm:
+            # De-Normalization from Non-stationary Transformer
+            dec_out = dec_out * (
+                stdev[:, 0, :].unsqueeze(1).repeat(1, self.num_classes, 1)
+            )
+            dec_out = dec_out + (
+                means[:, 0, :].unsqueeze(1).repeat(1, self.num_classes, 1)
+            )
 
-        return class_probs
+        return dec_out
+
+    def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
+        dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
+        # print("dec out shape", dec_out.shape)
+        # print("dec out", dec_out[:, -self.num_classes:, :].shape, dec_out[:, -self.num_classes:, :])
+        dec_out = self.fc(dec_out)
+        dec_out = dec_out.squeeze(-1)
+        # print("dec out", dec_out.shape, dec_out)
+        # return dec_out[:, -self.num_classes:, :]  # [B, L, D]
+        return dec_out
+
+    # def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
+    #     if self.use_norm:
+    #         means = x_enc.mean(1, keepdim=True).detach()
+    #         x_enc = x_enc - means
+    #         stdev = torch.sqrt(
+    #             torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5
+    #         )
+    #         x_enc /= stdev
+
+    #     _, _, N = x_enc.shape
+
+    #     enc_out = self.enc_embedding(x_enc, x_mark_enc)
+    #     enc_out, attns = self.encoder(enc_out, attn_mask=None)
+
+    #     # Apply the classifier to the last output of the encoder
+    #     class_scores = self.classifier(enc_out[:, -1, :])
+
+    #     # Apply softmax to convert raw scores into probabilities
+    #     class_probs = F.softmax(class_scores, dim=-1)
+
+    #     return class_probs

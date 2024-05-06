@@ -245,7 +245,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_classes",
         type=int,
-        default=45,
+        default=39,
         help="number of classes for classification",
     )
     parser.add_argument(
