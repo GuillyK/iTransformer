@@ -2,6 +2,8 @@ from data_provider.data_factory import data_provider
 from experiments.exp_basic import Exp_Basic
 from utils.tools import EarlyStopping, adjust_learning_rate, visual
 from utils.metrics import metric
+from sklearn.metrics import ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from torch import optim
@@ -345,15 +347,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         input = test_data.inverse_transform(
                             input.squeeze(0)
                         ).reshape(shape)
-                    gt = np.concatenate(
-                        (input[0, :, -1], true[0, :, -1]), axis=0
-                    )
-                    pd = np.concatenate(
-                        (input[0, :, -1], pred[0, :, -1]), axis=0
-                    )
+                    gt = true[:-1]
+                    pd = pred[:-1]
                     visual(gt, pd, os.path.join(folder_path, str(i) + ".pdf"))
 
-        preds = np.array(preds)
+        preds = np.array(preds)  # [Batch, no_classes]
         trues = np.array(trues)
         print("test shape:", preds.shape, trues.shape)
         preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
@@ -366,7 +364,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             os.makedirs(folder_path)
 
         acc, conf_matrix, prec, rec, F1 = metric(preds, trues)
+
         print("acc:{}, prec:{}, recall:{}, F1:{}".format(acc, prec, rec, F1))
+
         f = open("result_long_term_forecast.txt", "a")
         f.write(setting + "  \n")
         f.write("acc:{}, prec:{}, recall:{}, F1:{}".format(acc, prec, rec, F1))
@@ -375,11 +375,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         f.close()
 
         np.save(
-            folder_path + "metrics.npy", np.array([acc, conf_matrix, prec, rec, F])
+            folder_path + "metrics.npy",
+            np.array([acc, conf_matrix, prec, rec, F1]),
         )
         np.save(folder_path + "pred.npy", preds)
         np.save(folder_path + "true.npy", trues)
-
+        disp = ConfusionMatrixDisplay(confusion_matrix=conf_matrix)
+        disp.plot()
+        plt.savefig(folder_path + "confusion_matrix.pdf")
+        plt.close()
         return
 
     def predict(self, setting, load=False):
