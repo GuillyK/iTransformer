@@ -89,6 +89,8 @@ def visual(true, preds=None, name="./pic/test.pdf"):
     """
     Results visualization
     """
+    print(true.shape, preds.shape)
+    print(true, preds)
     plt.figure()
     plt.bar(len(true), true, label="GroundTruth", linewidth=2)
     if preds is not None:

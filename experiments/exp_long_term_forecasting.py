@@ -197,6 +197,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     # outputs = outputs[:, -self.args.num_classes :, f_dim:]
                     # batch_y = batch_y.float().to(self.device)
                     outputs = outputs.float()
+                    print(outputs)
+                    exit()
                     loss = criterion(outputs, batch_y)
                     train_loss.append(loss.item())
 
@@ -337,7 +339,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                 pred = outputs
                 true = batch_y
-
                 preds.append(pred)
                 trues.append(true)
                 if i % 20 == 0:
@@ -347,8 +348,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         input = test_data.inverse_transform(
                             input.squeeze(0)
                         ).reshape(shape)
-                    gt = true[:-1]
-                    pd = pred[:-1]
+                    gt = true[0]
+                    pd = pred[0]
                     visual(gt, pd, os.path.join(folder_path, str(i) + ".pdf"))
 
         preds = np.array(preds)  # [Batch, no_classes]

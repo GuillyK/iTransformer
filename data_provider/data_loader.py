@@ -700,6 +700,12 @@ class Dataset_Crop(Dataset):
         cols = [x for x in cols if x not in self.target]
         cols.remove("date")
         cols.remove("FOI_ID_LEVERANCIER")
+        if self.scale:
+            self.scaler.fit(df_raw[cols].values)
+            scaled_data = self.scaler.transform(df_raw[cols].values)
+        else:
+            scaled_data = df_raw[cols].values
+        df_raw[cols]=scaled_data
         groups = df_raw.groupby("FOI_ID_LEVERANCIER")
         print("these are the groups\n", groups)
         df_raw = df_raw[
@@ -740,11 +746,7 @@ class Dataset_Crop(Dataset):
         cur_group = list_of_groups[self.split_id]
         df_data = cur_group[cols_data]
 
-        if self.scale:
-            self.scaler.fit(df_data.values)
-            data = self.scaler.transform(df_data.values)
-        else:
-            data = df_data.values
+
 
         # # print("training", train_groups.head())
         # for group_df in [train_groups, vali_groups, test_groups]:

@@ -50,9 +50,9 @@ class Model(nn.Module):
             ],
             norm_layer=torch.nn.LayerNorm(configs.d_model),
         )
-        self.fc = nn.Linear(7, 1)
+        # self.fc = nn.Linear(7, 1)
         self.classifier = nn.Linear(
-            configs.d_model, self.num_classes, bias=True
+            configs.d_model, self.num_classes
         )
 
     def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
@@ -75,7 +75,7 @@ class Model(nn.Module):
         enc_out = self.enc_embedding(
             x_enc, x_mark_enc
         )  # covariates (e.g timestamp) can be also embedded as tokens
-
+        
         # B N E -> B N E                (B L E -> B L E in the vanilla Transformer)
         # the dimensions of embedded time series has been inverted, and then processed by native attn, layernorm and ffn modules
         enc_out, attns = self.encoder(enc_out, attn_mask=None)
@@ -100,7 +100,8 @@ class Model(nn.Module):
         dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
         # print("dec out shape", dec_out.shape)
         # print("dec out", dec_out[:, -self.num_classes:, :].shape, dec_out[:, -self.num_classes:, :])
-        dec_out = self.fc(dec_out)
+        # dec_out = self.fc(dec_out)
+        dec_out = self.classifier(dec_out)
         dec_out = dec_out.squeeze(-1)
         # print("dec out", dec_out.shape, dec_out)
         # return dec_out[:, -self.num_classes:, :]  # [B, L, D]
