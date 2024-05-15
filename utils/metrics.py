@@ -65,19 +65,21 @@ def accuracy(pred, true):
 
 
 def confusion_matrix_score(pred, true):
-    return confusion_matrix(true, pred)
+    class_preds = np.argmax(pred, axis=1)
+    class_true = np.argmax(true, axis=1)
+    return confusion_matrix(class_true, class_preds)
 
 
 def precision(pred, true):
-    return precision_score(true, pred)
+    return precision_score(true, pred, average='micro')
 
 
 def recall(pred, true):
-    return recall_score(true, pred)
+    return recall_score(true, pred, average='micro')
 
 
 def f1(pred, true):
-    return f1_score(true, pred)
+    return f1_score(true, pred, average='micro')
 
 
 # print(confusion_matrix(y_test, predictions))

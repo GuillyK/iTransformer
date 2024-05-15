@@ -89,12 +89,15 @@ def visual(true, preds=None, name="./pic/test.pdf"):
     """
     Results visualization
     """
-    print(true.shape, preds.shape)
-    print(true, preds)
+    # print(true.shape, preds.shape)
+    # print(true, preds)
+    true = true[0]
+    preds = preds[0]
+    # print(true)
     plt.figure()
-    plt.bar(len(true), true, label="GroundTruth", linewidth=2)
+    plt.plot(range(len(true)), true, label="GroundTruth", linewidth=2)
     if preds is not None:
-        plt.bar(len(preds), preds, label="Prediction", linewidth=2)
+        plt.plot(range(len(preds)), preds, label="Prediction", linewidth=2)
     plt.legend()
     plt.savefig(name, bbox_inches="tight")
 

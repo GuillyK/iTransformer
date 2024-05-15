@@ -2,7 +2,8 @@ import os
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
+from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler
 from utils.timefeatures import time_features
 import warnings
@@ -706,100 +707,168 @@ class Dataset_Crop(Dataset):
         else:
             scaled_data = df_raw[cols].values
         df_raw[cols]=scaled_data
-        groups = df_raw.groupby("FOI_ID_LEVERANCIER")
-        print("these are the groups\n", groups)
+        # groups = df_raw.groupby("FOI_ID_LEVERANCIER")
+        # print("these are the groups\n", groups)
         df_raw = df_raw[
             ["date"] + ["FOI_ID_LEVERANCIER"] + cols + self.target
         ]
+        df_raw["date"] = pd.to_datetime(df_raw.date)
+        df_raw['year'] = df_raw.date.dt.year
+        df_raw['month'] = df_raw.date.dt.month
+        groups = df_raw.groupby(['FOI_ID_LEVERANCIER', 'year', 'month'])
+        data_x = []
+        data_y = []
+        data_stamp = []
+        desired_length = 30 #seq_length maybe later
+        # Loop over the groups
+        for (FOI_ID_LEVERANCIER, year, month), group_data in tqdm(groups):
+            # Now, group_data contains the data for one 'FOI_ID_LEVERANCIER' for one month
 
-        num_train = int(len(groups) * 0.7)
-        num_test = int(len(groups) * 0.2)
-        num_vali = len(groups) - num_train - num_test
+            # skip januari for now since it has 16 days #TODO: fix this
+            if month == 1:
+                continue
+            month_data_x = group_data[cols].values.astype(np.float64)
+            month_data_y = group_data[self.target].values.astype(np.float64)
+            if len(month_data_x) < desired_length:
+                padding = desired_length - len(month_data_x)
+                month_data_x = np.pad(month_data_x, ((0, padding), (0, 0)), mode='constant')
+                month_data_y = np.pad(month_data_y, ((0, padding), (0, 0)), mode='constant')
+            elif len(month_data_x) > desired_length:
+                month_data_x = month_data_x[:desired_length]
+                month_data_y = month_data_y[:desired_length]
+
+
+            df_stamp_month = group_data[["date"]]
+            df_stamp_month["date"] = pd.to_datetime(df_stamp_month.date)
+            if self.timeenc == 0:
+                df_stamp_month["month"] = df_stamp_month.date.apply(
+                    lambda row: row.month, axis=1
+                )
+                df_stamp_month["day"] = df_stamp_month.date.apply(lambda row: row.day, axis=1)
+                df_stamp_month["weekday"] = df_stamp_month.date.apply(
+                    lambda row: row.weekday(), axis=1
+                )
+                df_stamp_month["hour"] = df_stamp_month.date.apply(
+                    lambda row: row.hour, axis=1
+                )
+                data_stamp_month = df_stamp_month.drop(["date"], axis=1).values
+            elif self.timeenc == 1:
+                data_stamp_month = time_features(
+                    pd.to_datetime(df_stamp_month["date"].values), freq=self.freq
+                )
+                data_stamp_month = data_stamp_month.transpose(1, 0)
+        data_x.append(month_data_x)
+        data_y.append(month_data_y)
+        data_stamp.append(data_stamp_month)
+
+
+        num_train = int(len(data_x) * 0.7)
+        num_test = int(len(data_x) * 0.1)
+        num_vali = len(data_x) - num_train - num_test
+
+        train_data_x = data_x[:num_train]
+        test_data_x = data_x[num_train : num_train + num_test]
+        vali_data_x = data_x[-num_vali:]
+        total_data_x = [train_data_x, vali_data_x, test_data_x]
+
+        train_data_y = data_y[:num_train]
+        test_data_y = data_y[num_train : num_train + num_test]
+        vali_data_y = data_y[-num_vali:]
+        total_data_y = [train_data_y, vali_data_y, test_data_y]
+
+        train_data_stamp = data_stamp[:num_train]
+        test_data_stamp = data_stamp[num_train : num_train + num_test]
+        vali_data_stamp = data_stamp[-num_vali:]
+        total_data_stamp = [train_data_stamp, vali_data_stamp, test_data_stamp]
+
+        self.data_x = total_data_x[self.split_id]
+        self.data_y = total_data_y[self.split_id]
+        self.data_stamp = total_data_stamp[self.split_id]
+
+
 
         # Borders to later get the the number of groups needed for training, validation, and testing
-        border1s = [
-            0,
-            num_train - self.seq_len,
-            len(groups) - num_test - self.seq_len,
-        ]
-        border2s = [num_train, num_train + num_vali, len(groups)]
-        # Border split for train, val, and test
-        border1 = border1s[self.split_id]
-        border2 = border2s[self.split_id]
+        # border1s = [
+        #     0,
+        #     num_train - self.seq_len,
+        #     len(groups) - num_test - self.seq_len,
+        # ]
+        # border2s = [num_train, num_train + num_vali, len(groups)]
+        # # Border split for train, val, and test
+        # border1 = border1s[self.split_id]
+        # border2 = border2s[self.split_id]
 
         # Create a list of group keys
-        group_keys = groups.groups.keys()
+        # group_keys = groups.groups.keys()
 
-        # Split the keys into training, validation, and testing keys
-        train_keys = list(group_keys)[:num_train]
-        test_keys = list(group_keys)[num_train : num_train + num_test]
-        vali_keys = list(group_keys)[-num_vali:]
+        # # Split the keys into training, validation, and testing keys
+        # train_keys = list(group_keys)[:num_train]
+        # test_keys = list(group_keys)[num_train : num_train + num_test]
+        # vali_keys = list(group_keys)[-num_vali:]
 
-        # Create training, validation, and testing groups
-        train_groups = groups.filter(lambda x: x.name in train_keys)
-        test_groups = groups.filter(lambda x: x.name in test_keys)
-        vali_groups = groups.filter(lambda x: x.name in vali_keys)
-        list_of_groups = [train_groups, test_groups, vali_groups]
+        # # Create training, validation, and testing groups
+        # train_groups = groups.filter(lambda x: x.name in train_keys)
+        # test_groups = groups.filter(lambda x: x.name in test_keys)
+        # vali_groups = groups.filter(lambda x: x.name in vali_keys)
+        # list_of_groups = [train_groups, vali_groups, test_groups]
 
-        amount_features = len(cols)
-        cols_data = df_raw.columns[1 : amount_features + 1]
-        cur_group = list_of_groups[self.split_id]
-        df_data = cur_group[cols_data]
+        # amount_features = len(cols)
+        # cols_data = df_raw.columns[1 : amount_features + 1]
+        # cur_group = list_of_groups[self.split_id]
+        # df_data = cur_group[cols_data]
 
 
+        # df_stamp = cur_group[["date"]]
+        # df_stamp["date"] = pd.to_datetime(df_stamp.date)
+        # if self.timeenc == 0:
+        #     df_stamp["month"] = df_stamp.date.apply(
+        #         lambda row: row.month, axis=1
+        #     )
+        #     df_stamp["day"] = df_stamp.date.apply(lambda row: row.day, axis=1)
+        #     df_stamp["weekday"] = df_stamp.date.apply(
+        #         lambda row: row.weekday(), axis=1
+        #     )
+        #     df_stamp["hour"] = df_stamp.date.apply(
+        #         lambda row: row.hour, axis=1
+        #     )
+        #     data_stamp = df_stamp.drop(["date"], axis=1).values
+        # elif self.timeenc == 1:
+        #     data_stamp = time_features(
+        #         pd.to_datetime(df_stamp["date"].values), freq=self.freq
+        #     )
+        #     data_stamp = data_stamp.transpose(1, 0)
 
-        # # print("training", train_groups.head())
-        # for group_df in [train_groups, vali_groups, test_groups]:
-        #     group_df = group_df[["date"] + cols + [self.target]]
-        #     print("group df", group_df.head())
-        #     if self.features == "M" or self.features == "MS":
-        #         cols_data = group_df.columns[1:]
-        #         df_data = group_df[cols_data]
-        #     elif self.features == "S":
-        #         df_data = group_df[[self.target]]
+        # self.data_x = cur_group[cols_data].values.astype(np.float64)
+        # self.data_y = cur_group[self.target].values.astype(np.float64)
+        # self.data_stamp = data_stamp_month
 
-        df_stamp = cur_group[["date"]]
-        df_stamp["date"] = pd.to_datetime(df_stamp.date)
-        if self.timeenc == 0:
-            df_stamp["month"] = df_stamp.date.apply(
-                lambda row: row.month, axis=1
-            )
-            df_stamp["day"] = df_stamp.date.apply(lambda row: row.day, axis=1)
-            df_stamp["weekday"] = df_stamp.date.apply(
-                lambda row: row.weekday(), axis=1
-            )
-            df_stamp["hour"] = df_stamp.date.apply(
-                lambda row: row.hour, axis=1
-            )
-            data_stamp = df_stamp.drop(["date"], axis=1).values
-        elif self.timeenc == 1:
-            data_stamp = time_features(
-                pd.to_datetime(df_stamp["date"].values), freq=self.freq
-            )
-            data_stamp = data_stamp.transpose(1, 0)
-
-        self.data_x = cur_group[cols_data].values.astype(np.float64)
-        self.data_y = cur_group[self.target].values.astype(np.float64)
-        self.data_stamp = data_stamp
-        print("These are the target values", self.target, cur_group[self.target])
+        # print("These are the target values", self.target, cur_group[self.target])
 
     def __getitem__(self, index):
-        s_begin = index
-        s_end = s_begin + self.seq_len
-        r_begin = s_end - self.label_len
-        r_end = r_begin + self.label_len + self.pred_len
-
-        seq_x = self.data_x[s_begin:s_end]
-        seq_y = self.data_y[r_begin:r_end]
-        seq_x_mark = self.data_stamp[s_begin:s_end]
+        seq_x = self.data_x[index]
+        seq_y =self.data_y[index]
+        seq_x_mark = self.data_stamp[index]
         seq_y_mark = self.data_stamp[index]
-        seq_y = self.data_y[index]
+        # day day day
+        # jan, feb, mar, april, may, june, july, aug, sept, oct, nov, dec, field2 jan, field2 feb
+        #
+
+        # s_begin = index
+        # s_end = s_begin + self.seq_len
+        # r_begin = s_end - self.label_len
+        # r_end = r_begin + self.label_len + self.pred_len
+
+        # seq_x = self.data_x[s_begin:s_end]
+        # seq_y = self.data_y[r_begin:r_end]
+        # seq_x_mark = self.data_stamp[s_begin:s_end]
+        # seq_y_mark = self.data_stamp[index]
+        # seq_y = self.data_y[index]
         # print(seq_y, self.data_y, self.data_y.shape, self.data_x.shape)
         # exit()
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
     def __len__(self):
-        return len(self.data_x) - self.seq_len
+        return len(self.data_x)
 
     def inverse_transform(self, data):
         return self.scaler.inverse_transform(data)

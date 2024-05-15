@@ -354,7 +354,7 @@ if __name__ == "__main__":
 
         exp = Exp(args)  # set experiments
         print(
-            ">>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<".format(
+            ">>>>>>>testing without training: {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<".format(
                 setting
             )
         )

@@ -50,12 +50,16 @@ class Model(nn.Module):
             ],
             norm_layer=torch.nn.LayerNorm(configs.d_model),
         )
-        # self.fc = nn.Linear(7, 1)
+        self.projector = nn.Linear(
+            configs.d_model, configs.seq_len, bias=True
+        )
         self.classifier = nn.Linear(
-            configs.d_model, self.num_classes
+            420, self.num_classes
         )
 
     def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
+        # print("shape of x_enc, x_enc_mask", x_enc.shape, x_mark_enc.shape)
+        # x_enc: [B,seq_len,N]; x_enc_mask: [B,seq_len,4]
         if self.use_norm:
             # Normalization from Non-stationary Transformer
             means = x_enc.mean(1, keepdim=True).detach()
@@ -66,6 +70,7 @@ class Model(nn.Module):
             x_enc /= stdev
 
         _, _, N = x_enc.shape  # B L N
+        # print("N",N)
         # B: batch_size;    E: d_model;
         # L: seq_len;       S: pred_len;
         # N: number of variate (tokens), can also includes covariates
@@ -75,25 +80,30 @@ class Model(nn.Module):
         enc_out = self.enc_embedding(
             x_enc, x_mark_enc
         )  # covariates (e.g timestamp) can be also embedded as tokens
-        
+        # print("shape of enc_out after enc_embedding", enc_out.shape)
         # B N E -> B N E                (B L E -> B L E in the vanilla Transformer)
         # the dimensions of embedded time series has been inverted, and then processed by native attn, layernorm and ffn modules
         enc_out, attns = self.encoder(enc_out, attn_mask=None)
+        # print("shape of enc_out after encoder", enc_out.shape)
 
         # B N E -> B N S -> B S N
-        dec_out = self.classifier(enc_out).permute(0, 2, 1)[
+        dec_out = self.projector(enc_out).permute(0, 2, 1)[
             :, :, :N
         ]  # filter the covariates
 
-        if self.use_norm:
-            # De-Normalization from Non-stationary Transformer
-            dec_out = dec_out * (
-                stdev[:, 0, :].unsqueeze(1).repeat(1, self.num_classes, 1)
-            )
-            dec_out = dec_out + (
-                means[:, 0, :].unsqueeze(1).repeat(1, self.num_classes, 1)
-            )
-
+        # Flatten the output tensor to feed it into the classification layer
+        dec_out = dec_out.reshape(dec_out.size(0), -1)
+        dec_out = self.classifier(dec_out)
+        # print("shape of dec_out after classifier", dec_out.shape)
+        # if self.use_norm:
+        #     # De-Normalization from Non-stationary Transformer
+        #     dec_out = dec_out * (
+        #         stdev[:, 0, :].unsqueeze(1).repeat(1, self.num_classes, 1)
+        #     )
+        #     dec_out = dec_out + (
+        #         means[:, 0, :].unsqueeze(1).repeat(1, self.num_classes, 1)
+        #     )
+        # print("shape of dec_out after de-normalization", dec_out.shape)
         return dec_out
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
@@ -101,8 +111,8 @@ class Model(nn.Module):
         # print("dec out shape", dec_out.shape)
         # print("dec out", dec_out[:, -self.num_classes:, :].shape, dec_out[:, -self.num_classes:, :])
         # dec_out = self.fc(dec_out)
-        dec_out = self.classifier(dec_out)
         dec_out = dec_out.squeeze(-1)
+        # dec_out = F.softmax(dec_out, dim=-1)
         # print("dec out", dec_out.shape, dec_out)
         # return dec_out[:, -self.num_classes:, :]  # [B, L, D]
         return dec_out

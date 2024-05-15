@@ -6,11 +6,15 @@ from sklearn.metrics import ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import optim
 import os
 import time
 import warnings
 import numpy as np
+from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
+
 
 warnings.filterwarnings("ignore")
 
@@ -18,6 +22,7 @@ warnings.filterwarnings("ignore")
 class Exp_Long_Term_Forecast(Exp_Basic):
     def __init__(self, args):
         super(Exp_Long_Term_Forecast, self).__init__(args)
+        self.writer = SummaryWriter()  # Create a SummaryWriter instance
 
     def _build_model(self):
         model = self.model_dict[self.args.model].Model(self.args).float()
@@ -129,7 +134,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         if self.args.use_amp:
             scaler = torch.cuda.amp.GradScaler()
-
+        preds = []
+        trues = []
         for epoch in range(self.args.train_epochs):
             iter_count = 0
             train_loss = []
@@ -139,6 +145,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(
                 train_loader
             ):
+                # for j in sequences:
                 iter_count += 1
                 model_optim.zero_grad()
                 batch_x = batch_x.float().to(self.device)
@@ -197,10 +204,21 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     # outputs = outputs[:, -self.args.num_classes :, f_dim:]
                     # batch_y = batch_y.float().to(self.device)
                     outputs = outputs.float()
-                    print(outputs)
-                    exit()
+                    # print(outputs)
+                    # exit()
+
                     loss = criterion(outputs, batch_y)
                     train_loss.append(loss.item())
+
+                    probabilities = F.softmax(outputs, dim=1)
+                    probabilities = probabilities.detach().cpu().numpy()
+
+                    one_hot_prob = np.eye(len(probabilities[0]))[np.argmax(probabilities[0])]
+                    true = batch_y.detach().cpu().numpy()
+                    preds.append(one_hot_prob)
+                    trues.append(true[0])
+                    # Detach and move to CPU
+
 
                 if (i + 1) % 100 == 0:
                     print(
@@ -227,7 +245,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 else:
                     loss.backward()
                     model_optim.step()
-
+                self.writer.add_scalar('Loss/train', loss, epoch)
+                for name, param in self.model.named_parameters():
+                    self.writer.add_histogram('Weights/' + name, param.data, epoch)
+                    self.writer.add_histogram('Gradients/' + name, param.grad, epoch)
             print(
                 "Epoch: {} cost time: {}".format(
                     epoch + 1, time.time() - epoch_time
@@ -237,6 +258,16 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)
 
+            self.writer.add_scalar('Loss/vali', vali_loss, epoch)
+            self.writer.add_scalar('Loss/test', test_loss, epoch)
+            # log learning rate
+            self.writer.add_scalar('Learning Rate', model_optim.param_groups[0]['lr'], epoch)
+            acc, conf_matrix, prec, rec, F1 = metric(preds, trues)
+            self.writer.add_scalar('Accuracy', acc, epoch)
+            self.writer.add_scalar('Precision', prec, epoch)
+            self.writer.add_scalar('Recall', rec, epoch)
+            self.writer.add_scalar('F1', F1, epoch)
+            self.writer.add_histogram('Confusion Matrix', conf_matrix, epoch)
             print(
                 "Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
                     epoch + 1, train_steps, train_loss, vali_loss, test_loss
@@ -265,7 +296,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     os.path.join("./checkpoints/" + setting, "checkpoint.pth")
                 )
             )
-
+        print("testing modelHEYAAAAA")
         preds = []
         trues = []
         folder_path = "./test_results/" + setting + "/"
@@ -275,8 +306,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         self.model.eval()
         with torch.no_grad():
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(
-                test_loader
+                tqdm(test_loader)
             ):
+
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
 
@@ -326,38 +358,51 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 #     self.device
                 # )
                 outputs = outputs.float()
+                # Apply softmax to get probabilities
+                probabilities = F.softmax(outputs, dim=1)
+
+                # Detach and move to CPU
+                probabilities = probabilities.detach().cpu().numpy()
+
+                # Get the predicted class labels by taking the argmax of the probabilities
+                # print(probabilities.shape, probabilities)
+                predictions = probabilities
+                # predictions = np.argmax(probabilities, axis=1)
                 outputs = outputs.detach().cpu().numpy()
                 batch_y = batch_y.detach().cpu().numpy()
-                if test_data.scale and self.args.inverse:
-                    shape = outputs.shape
-                    outputs = test_data.inverse_transform(
-                        outputs.squeeze(0)
-                    ).reshape(shape)
-                    batch_y = test_data.inverse_transform(
-                        batch_y.squeeze(0)
-                    ).reshape(shape)
+                # if test_data.scale and self.args.inverse:
+                #     shape = outputs.shape
+                #     outputs = test_data.inverse_transform(
+                #         outputs.squeeze(0)
+                #     ).reshape(shape)
+                #     batch_y = test_data.inverse_transform(
+                #         batch_y.squeeze(0)
+                #     ).reshape(shape)
 
-                pred = outputs
+                # pred = outputs
                 true = batch_y
-                preds.append(pred)
-                trues.append(true)
-                if i % 20 == 0:
+
+                if i % 100 == 0:
                     input = batch_x.detach().cpu().numpy()
                     if test_data.scale and self.args.inverse:
                         shape = input.shape
                         input = test_data.inverse_transform(
                             input.squeeze(0)
                         ).reshape(shape)
-                    gt = true[0]
-                    pd = pred[0]
+                    gt = true
+                    pd = predictions
                     visual(gt, pd, os.path.join(folder_path, str(i) + ".pdf"))
+                one_hot_prob = np.eye(len(probabilities[0]))[np.argmax(probabilities[0])]
+
+                preds.append(one_hot_prob)
+                trues.append(true[0])
 
         preds = np.array(preds)  # [Batch, no_classes]
         trues = np.array(trues)
         print("test shape:", preds.shape, trues.shape)
-        preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
-        trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
-        print("test shape:", preds.shape, trues.shape)
+        # preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
+        # trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
+        # print("test shape:", preds.shape, trues.shape)
 
         # result save
         folder_path = "./results/" + setting + "/"
@@ -377,8 +422,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         np.save(
             folder_path + "metrics.npy",
-            np.array([acc, conf_matrix, prec, rec, F1]),
+            np.array([acc, prec, rec, F1]),
         )
+        np.save(folder_path + "confusion_matrix.npy", conf_matrix)
         np.save(folder_path + "pred.npy", preds)
         np.save(folder_path + "true.npy", trues)
         disp = ConfusionMatrixDisplay(confusion_matrix=conf_matrix)
