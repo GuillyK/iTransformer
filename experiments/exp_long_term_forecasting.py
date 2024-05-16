@@ -183,6 +183,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                             )
 
                         f_dim = -1 if self.args.features == "MS" else 0
+                        print("using amp")
                         outputs = outputs[:, -self.args.pred_len :, f_dim:]
                         batch_y = batch_y[:, -self.args.pred_len :, f_dim:].to(
                             self.device
@@ -193,11 +194,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     if self.args.output_attention:
                         outputs = self.model(
                             batch_x, batch_x_mark, batch_y, batch_y_mark
-                        )[0]
+                        )
                     else:
                         outputs = self.model(
                             batch_x, batch_x_mark, batch_y, batch_y_mark
                         )
+
 
                     f_dim = -1 if self.args.features == "MS" else 0
                     # print(outputs.shape, batch_y.shape)
@@ -206,7 +208,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     outputs = outputs.float()
                     # print(outputs)
                     # exit()
-
                     loss = criterion(outputs, batch_y)
                     train_loss.append(loss.item())
 

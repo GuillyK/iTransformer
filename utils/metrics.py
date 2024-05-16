@@ -44,11 +44,11 @@ def MSPE(pred, true):
 
 
 def metric(pred, true):
-    mae = MAE(pred, true)
-    mse = MSE(pred, true)
-    rmse = RMSE(pred, true)
-    mape = MAPE(pred, true)
-    mspe = MSPE(pred, true)
+    # mae = MAE(pred, true)
+    # mse = MSE(pred, true)
+    # rmse = RMSE(pred, true)
+    # mape = MAPE(pred, true)
+    # mspe = MSPE(pred, true)
 
     acc = accuracy(pred, true)
     conf_matrix = confusion_matrix_score(pred, true)

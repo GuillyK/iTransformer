@@ -134,7 +134,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--output_attention",
-        action="store_true",
+        action="store_false",
         help="whether to output attention in ecoder",
     )
     parser.add_argument(
