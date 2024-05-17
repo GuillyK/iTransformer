@@ -695,6 +695,10 @@ class Dataset_Crop(Dataset):
         folder = os.path.join(path, type_sort)
         # check if in path train/test/val folder exists if not create
         if os.path.exists(folder):
+            df_raw = pd.read_csv(os.path.join(path, self.data_path))
+            target = df_raw.columns.str.startswith("class_name_late")
+            self.target = list(df_raw.columns[target])
+
             self.data_x = np.load(os.path.join(folder, "data_x.npy"))
             self.data_y = np.load(os.path.join(folder, "data_y.npy"))
             self.data_stamp = np.load(os.path.join(folder, "data_stamp.npy"))

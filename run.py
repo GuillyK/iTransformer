@@ -6,7 +6,7 @@ from experiments.exp_long_term_forecasting_partial import (
 )
 import random
 import numpy as np
-
+torch.multiprocessing.set_sharing_strategy('file_system')
 if __name__ == "__main__":
     fix_seed = 2023
     random.seed(fix_seed)
@@ -258,7 +258,6 @@ if __name__ == "__main__":
         help="the start index of variates for partial training, "
         "you can select [partial_start_index, min(enc_in + partial_start_index, N)]",
     )
-
     args = parser.parse_args()
     args.use_gpu = (
         True if torch.cuda.is_available() and args.use_gpu else False
@@ -270,6 +269,8 @@ if __name__ == "__main__":
         device_ids = args.devices.split(",")
         args.device_ids = [int(id_) for id_ in device_ids]
         args.gpu = args.device_ids[0]
+    elif args.use_gpu and not args.use_multi_gpu:
+        args.gpu = args.devices
 
     print("Args in experiment:")
     print(args)

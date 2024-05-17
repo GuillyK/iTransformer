@@ -129,7 +129,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         early_stopping = EarlyStopping(
             patience=self.args.patience, verbose=True
         )
-        self.writer.add_graph(self.model, train_loader)
         model_optim = self._select_optimizer()
         criterion = self._select_criterion()
         scheduler = lr_scheduler.ExponentialLR(model_optim, gamma=0.6)
@@ -147,6 +146,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(
                 train_loader
             ):
+
+
                 # for j in sequences:
                 iter_count += 1
                 model_optim.zero_grad()
@@ -197,10 +198,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         outputs = self.model(
                             batch_x, batch_x_mark, batch_y, batch_y_mark
                         )
+                        self.writer.add_graph(self.model, [batch_x, batch_x_mark, batch_y, batch_y_mark])
                     else:
                         outputs = self.model(
                             batch_x, batch_x_mark, batch_y, batch_y_mark
                         )
+                        self.writer.add_graph(self.model, [batch_x, batch_x_mark, batch_y, batch_y_mark])
 
 
                     f_dim = -1 if self.args.features == "MS" else 0
@@ -265,12 +268,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             self.writer.add_scalar('Loss/test', test_loss, epoch)
             # log learning rate
             self.writer.add_scalar('Learning Rate', model_optim.param_groups[0]['lr'], epoch)
-            acc, conf_matrix, prec, rec, F1 = metric(preds, trues)
+            target_names = train_data.target
+            acc, conf_matrix, prec, rec, F1 = metric(preds, trues, target_names)
+            # Add hyperparameters to SummaryWriter
+            self.writer.add_hparams(vars(self.args), {})
             self.writer.add_scalar('Accuracy', acc, epoch)
             self.writer.add_scalar('Precision', prec, epoch)
             self.writer.add_scalar('Recall', rec, epoch)
             self.writer.add_scalar('F1', F1, epoch)
-            self.writer.add_histogram('Confusion Matrix', conf_matrix, epoch)
+            self.writer.add_figure('Confusion Matrix', conf_matrix, epoch)
             print(
                 "Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
                     epoch + 1, train_steps, train_loss, vali_loss, test_loss
@@ -300,7 +306,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     os.path.join("./checkpoints/" + setting, "checkpoint.pth")
                 )
             )
-        print("testing modelHEYAAAAA")
         preds = []
         trues = []
         folder_path = "./test_results/" + setting + "/"
@@ -412,8 +417,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         folder_path = "./results/" + setting + "/"
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
-
-        acc, conf_matrix, prec, rec, F1 = metric(preds, trues)
+        target_names = test_data.target
+        acc, conf_matrix, prec, rec, F1 = metric(preds, trues, target_names)
 
         print("acc:{}, prec:{}, recall:{}, F1:{}".format(acc, prec, rec, F1))
 
