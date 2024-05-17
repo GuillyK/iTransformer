@@ -129,10 +129,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         early_stopping = EarlyStopping(
             patience=self.args.patience, verbose=True
         )
-
+        self.writer.add_graph(self.model, train_loader)
         model_optim = self._select_optimizer()
         criterion = self._select_criterion()
-        scheduler = lr_scheduler.ExponentialLR(model_optim, gamma=0.8)
+        scheduler = lr_scheduler.ExponentialLR(model_optim, gamma=0.6)
 
         if self.args.use_amp:
             scaler = torch.cuda.amp.GradScaler()
