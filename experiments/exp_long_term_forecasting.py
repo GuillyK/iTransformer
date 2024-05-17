@@ -82,7 +82,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         if self.args.output_attention:
                             outputs = self.model(
                                 batch_x, batch_x_mark, batch_y, batch_y_mark
-                            )[0]
+                            )
                         else:
                             outputs = self.model(
                                 batch_x, batch_x_mark, batch_y, batch_y_mark
@@ -91,7 +91,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     if self.args.output_attention:
                         outputs = self.model(
                             batch_x, batch_x_mark, batch_y, batch_y_mark
-                        )[0]
+                        )
                     else:
                         outputs = self.model(
                             batch_x, batch_x_mark, batch_y, batch_y_mark
@@ -337,7 +337,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         if self.args.output_attention:
                             outputs = self.model(
                                 batch_x, batch_x_mark, batch_y, batch_y_mark
-                            )[0]
+                            )
                         else:
                             outputs = self.model(
                                 batch_x, batch_x_mark, batch_y, batch_y_mark
@@ -346,7 +346,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     if self.args.output_attention:
                         outputs = self.model(
                             batch_x, batch_x_mark, batch_y, batch_y_mark
-                        )[0]
+                        )
 
                     else:
                         outputs = self.model(

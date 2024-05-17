@@ -4,6 +4,8 @@ import pandas as pd
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 from tqdm import tqdm
+from sklearn.utils import shuffle
+
 from sklearn.preprocessing import StandardScaler
 from utils.timefeatures import time_features
 import warnings
@@ -734,12 +736,8 @@ class Dataset_Crop(Dataset):
             data_stamp = []
             desired_length = 30 #seq_length maybe later
             # Loop over the groups
-            i = 0
             for (FOI_ID_LEVERANCIER, year, month), group_data in tqdm(groups):
                 # Now, group_data contains the data for one 'FOI_ID_LEVERANCIER' for one month
-                # i+=1
-                # if i > 200:
-                #     break
                 # skip januari for now since it has 16 days #TODO: fix this
                 if month == 1:
                     continue
@@ -789,6 +787,9 @@ class Dataset_Crop(Dataset):
             num_train = int(len(data_x) * 0.7)
             num_test = int(len(data_x) * 0.1)
             num_vali = len(data_x) - num_train - num_test
+
+            # shuffle the data
+            data_x, data_y, data_stamp = shuffle(np.array(data_x), np.array(data_y), np.array(data_stamp), random_state = 42)
 
             train_data_x = data_x[:num_train]
             test_data_x = data_x[num_train : num_train + num_test]
