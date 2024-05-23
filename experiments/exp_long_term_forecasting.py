@@ -52,6 +52,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
         return criterion
 
+    def _weights_init(self, m):
+        if isinstance(m, nn.Linear):
+            torch.nn.init.kaiming_uniform_(m.weight, nonlinearity='relu')
+            if m.bias is not None:
+                torch.nn.init.zeros_(m.bias)
+
     def vali(self, vali_data, vali_loader, criterion):
         total_loss = []
         self.model.eval()
@@ -156,6 +162,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             scaler = torch.cuda.amp.GradScaler()
         preds = []
         trues = []
+        self.model.apply(self._weights_init)
         for epoch in range(self.args.train_epochs):
             iter_count = 0
             train_loss = []
