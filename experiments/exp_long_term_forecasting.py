@@ -42,21 +42,30 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         )
         return model_optim
 
-    def _select_criterion(self):
+    def _select_criterion(self, class_weights):
         # criterion = nn.MSELoss()
-        criterion = nn.CrossEntropyLoss()
+        if isinstance(class_weights, np.ndarray):
+            class_weights = torch.from_numpy(class_weights)
+        class_weights = class_weights.float().to(self.device)
+
+        criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
         return criterion
 
     def vali(self, vali_data, vali_loader, criterion):
         total_loss = []
         self.model.eval()
+        class_weights = torch.from_numpy(vali_loader.dataset.class_weights)
+        # class_weights = class_weights.float().to(self.device)
+        criterion = self._select_criterion(class_weights)
+
         with torch.no_grad():
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(
                 vali_loader
             ):
                 batch_x = batch_x.float().to(self.device)
-                batch_y = batch_y.float()
-
+                batch_y = batch_y.float().to(self.device)
+                class_weights = vali_loader.dataset.class_weights
+                # class_weights = class_weights.float().to(self.device)
                 if "PEMS" in self.args.data or "Solar" in self.args.data:
                     batch_x_mark = None
                     batch_y_mark = None
@@ -104,12 +113,16 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 # )
                 outputs = outputs.float()
 
-                pred = outputs.detach().cpu()
-                true = batch_y.detach().cpu()
-
+                pred = outputs
+                true = batch_y
+                # if not pred.device == self.device or not true.device == self.device:
+                #     print(pred.device, true.device)
+                #     print("Warning: pred and true are not on the same device as criterion")
                 loss = criterion(pred, true)
-
+                loss = loss.detach().cpu().numpy()
                 total_loss.append(loss)
+                pred.detach().cpu().numpy()
+                true.detach().cpu().numpy()
         total_loss = np.average(total_loss)
         self.model.train()
         return total_loss
@@ -129,8 +142,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         early_stopping = EarlyStopping(
             patience=self.args.patience, verbose=True
         )
+
+
         model_optim = self._select_optimizer()
-        criterion = self._select_criterion()
+
+        class_weights = train_loader.dataset.class_weights
+        # class_weights = class_weights.float().to(self.device)
+        criterion = self._select_criterion(class_weights)
         scheduler = lr_scheduler.ExponentialLR(model_optim, gamma=0.6)
 
         if self.args.use_amp:
@@ -147,7 +165,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 train_loader
             ):
 
-
+                class_weights = train_loader.dataset.class_weights
                 # for j in sequences:
                 iter_count += 1
                 model_optim.zero_grad()
@@ -207,17 +225,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
 
                     f_dim = -1 if self.args.features == "MS" else 0
-                    # print(outputs.shape, batch_y.shape)
-                    # outputs = outputs[:, -self.args.num_classes :, f_dim:]
-                    # batch_y = batch_y.float().to(self.device)
                     outputs = outputs.float()
-                    # print(outputs)
-                    # exit()
                     loss = criterion(outputs, batch_y)
                     train_loss.append(loss.item())
 
                     probabilities = F.softmax(outputs, dim=1)
                     probabilities = probabilities.detach().cpu().numpy()
+
 
                     one_hot_prob = np.eye(len(probabilities[0]))[np.argmax(probabilities[0])]
                     true = batch_y.detach().cpu().numpy()
@@ -241,6 +255,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                             speed, left_time
                         )
                     )
+                    fig = plt.figure(figsize=(4,4))
+                    plt.bar(range(len(probabilities[0])), probabilities[0])
+                    plt.xlabel('Classes')
+                    plt.ylabel('Frequency')
+                    self.writer.add_figure('Probability Distribution', fig, global_step=i)
+                    plt.close(fig)
                     iter_count = 0
                     time_now = time.time()
 
@@ -255,6 +275,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 for name, param in self.model.named_parameters():
                     self.writer.add_histogram('Weights/' + name, param.data, epoch)
                     self.writer.add_histogram('Gradients/' + name, param.grad, epoch)
+
             print(
                 "Epoch: {} cost time: {}".format(
                     epoch + 1, time.time() - epoch_time
@@ -401,6 +422,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     gt = true
                     pd = predictions
                     visual(gt, pd, os.path.join(folder_path, str(i) + ".pdf"))
+                    self.writer.add_histogram('Probability Distribution',   probabilities[0], global_step=i)
                 one_hot_prob = np.eye(len(probabilities[0]))[np.argmax(probabilities[0])]
 
                 preds.append(one_hot_prob)
@@ -436,9 +458,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         np.save(folder_path + "confusion_matrix.npy", conf_matrix)
         np.save(folder_path + "pred.npy", preds)
         np.save(folder_path + "true.npy", trues)
-        disp = ConfusionMatrixDisplay(confusion_matrix=conf_matrix)
-        disp.plot()
-        plt.savefig(folder_path + "confusion_matrix.pdf")
+        # disp = ConfusionMatrixDisplay(confusion_matrix=conf_matrix)
+        conf_matrix.savefig(folder_path + "confusion_matrix.pdf")
+        # plt.savefig(folder_path + "confusion_matrix.pdf")
         plt.close()
         return
 
