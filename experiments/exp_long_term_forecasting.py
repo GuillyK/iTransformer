@@ -15,6 +15,7 @@ import warnings
 import numpy as np
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
+import psutil
 
 
 warnings.filterwarnings("ignore")
@@ -281,6 +282,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     epoch + 1, time.time() - epoch_time
                 )
             )
+            # Print memory usage
+            process = psutil.Process()
+            memory_usage = process.memory_info().rss / 1024 / 1024  # in MB
+            print("Memory Usage: {:.2f} MB".format(memory_usage))
             train_loss = np.average(train_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)
