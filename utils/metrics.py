@@ -86,7 +86,7 @@ def confusion_matrix_score(pred, true, class_names):
     return figure
 
 def plot_confusion_matrix(cm, class_names):
-    figure = plt.figure(figsize=(8, 8))
+    figure = plt.figure(figsize=(36, 36))
     plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Accent)
     plt.title("Confusion matrix")
     plt.colorbar()

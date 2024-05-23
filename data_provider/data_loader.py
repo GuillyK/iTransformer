@@ -7,6 +7,7 @@ from tqdm import tqdm
 from sklearn.utils import shuffle
 
 from sklearn.preprocessing import StandardScaler
+from sklearn.utils.class_weight import compute_class_weight
 from utils.timefeatures import time_features
 import warnings
 
@@ -698,7 +699,7 @@ class Dataset_Crop(Dataset):
             df_raw = pd.read_csv(os.path.join(path, self.data_path))
             target = df_raw.columns.str.startswith("class_name_late")
             self.target = list(df_raw.columns[target])
-
+            self.class_weights = np.load(os.path.join(folder, "class_weights.npy"))
             self.data_x = np.load(os.path.join(folder, "data_x.npy"))
             self.data_y = np.load(os.path.join(folder, "data_y.npy"))
             self.data_stamp = np.load(os.path.join(folder, "data_stamp.npy"))
@@ -738,15 +739,22 @@ class Dataset_Crop(Dataset):
             data_x = []
             data_y = []
             data_stamp = []
+            targets_count = []
             desired_length = 30 #seq_length maybe later
             # Loop over the groups
             for (FOI_ID_LEVERANCIER, year, month), group_data in tqdm(groups):
+
+
+
                 # Now, group_data contains the data for one 'FOI_ID_LEVERANCIER' for one month
                 # skip januari for now since it has 16 days #TODO: fix this
                 if month == 1:
                     continue
                 month_data_x = group_data[cols].values.astype(np.float64)
                 month_data_y = group_data[self.target].values.astype(np.float64)
+
+                target_values_flat = month_data_y.argmax(axis=1)
+                targets_count.append(target_values_flat[0])
                 if len(month_data_x) < desired_length:
                     padding = desired_length - len(month_data_x)
                     month_data_x = np.pad(month_data_x, ((0, padding), (0, 0)), mode='constant')
@@ -810,10 +818,14 @@ class Dataset_Crop(Dataset):
             vali_data_stamp = data_stamp[-num_vali:]
             total_data_stamp = [train_data_stamp, vali_data_stamp, test_data_stamp]
 
+            targets_count = sorted(targets_count)
+            self.class_weights = compute_class_weight(class_weight='balanced', classes = np.unique(targets_count), y=targets_count)
+
             self.data_x = np.array(total_data_x[self.split_id])
             self.data_y = np.array(total_data_y[self.split_id])
             self.data_stamp = np.array(total_data_stamp[self.split_id])
             # save these numpy arrays to a file
+            np.save(os.path.join(folder,"class_weights.npy") , self.class_weights)
             np.save(os.path.join(folder,"data_x.npy") , self.data_x)
             np.save(os.path.join(folder,"data_y.npy"), self.data_y)
             np.save(os.path.join(folder,"data_stamp.npy"), self.data_stamp)
