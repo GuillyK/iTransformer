@@ -87,14 +87,14 @@ def confusion_matrix_score(pred, true, class_names):
 
 def plot_confusion_matrix(cm, class_names):
     figure = plt.figure(figsize=(36, 36))
-    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Accent)
+    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
     plt.title("Confusion matrix")
     plt.colorbar()
     tick_marks = np.arange(len(class_names))
     plt.xticks(tick_marks, class_names, rotation=45)
     plt.yticks(tick_marks, class_names)
 
-    cm = np.around(cm.astype('float') / cm.sum(axis=1)[:, np.newaxis], decimals=2)
+    # cm = np.around(cm.astype('float') / cm.sum(axis=1)[:, np.newaxis], decimals=2)
     threshold = cm.max() / 2.
 
     for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):

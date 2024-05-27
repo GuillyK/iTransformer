@@ -24,7 +24,10 @@ warnings.filterwarnings("ignore")
 class Exp_Long_Term_Forecast(Exp_Basic):
     def __init__(self, args):
         super(Exp_Long_Term_Forecast, self).__init__(args)
-        self.writer = SummaryWriter()  # Create a SummaryWriter instance
+        log_file_name = "runs/" + args.model_id + ".log"
+        self.writer = SummaryWriter(log_dir=log_file_name)
+        # self.writer.add_hparams(vars(self.args), {})
+
 
     def _build_model(self):
         model = self.model_dict[self.args.model].Model(self.args).float()
@@ -156,7 +159,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         class_weights = train_loader.dataset.class_weights
         # class_weights = class_weights.float().to(self.device)
         criterion = self._select_criterion(class_weights)
-        scheduler = lr_scheduler.ExponentialLR(model_optim, gamma=0.6)
+        scheduler = lr_scheduler.ExponentialLR(model_optim, gamma=0.9)
 
         if self.args.use_amp:
             scaler = torch.cuda.amp.GradScaler()
@@ -304,7 +307,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             target_names = train_data.target
             acc, conf_matrix, prec, rec, F1 = metric(preds, trues, target_names)
             # Add hyperparameters to SummaryWriter
-            self.writer.add_hparams(vars(self.args), {})
+            # self.writer.add_hparams(vars(self.args), {})
             self.writer.add_scalar('Accuracy', acc, epoch)
             self.writer.add_scalar('Precision', prec, epoch)
             self.writer.add_scalar('Recall', rec, epoch)

@@ -134,7 +134,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--output_attention",
-        action="store_false",
+        action="store_true",
         help="whether to output attention in ecoder",
     )
     parser.add_argument(
@@ -245,7 +245,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_classes",
         type=int,
-        default=39,
+        default=3,
         help="number of classes for classification",
     )
     parser.add_argument(

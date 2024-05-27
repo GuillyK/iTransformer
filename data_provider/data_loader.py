@@ -703,6 +703,7 @@ class Dataset_Crop(Dataset):
             self.data_x = np.load(os.path.join(folder, "data_x.npy"))
             self.data_y = np.load(os.path.join(folder, "data_y.npy"))
             self.data_stamp = np.load(os.path.join(folder, "data_stamp.npy"))
+
         else:
             os.makedirs(folder)
 
@@ -735,64 +736,111 @@ class Dataset_Crop(Dataset):
             df_raw["date"] = pd.to_datetime(df_raw.date)
             df_raw['year'] = df_raw.date.dt.year
             df_raw['month'] = df_raw.date.dt.month
-            groups = df_raw.groupby(['FOI_ID_LEVERANCIER', 'year', 'month'])
+            groups = df_raw.groupby(['FOI_ID_LEVERANCIER'])
+            # groups = df_raw.groupby(['FOI_ID_LEVERANCIER', 'year', 'month'])
             data_x = []
             data_y = []
             data_stamp = []
             targets_count = []
-            desired_length = 30 #seq_length maybe later
-            # Loop over the groups
-            for (FOI_ID_LEVERANCIER, year, month), group_data in tqdm(groups):
+            desired_length = 9 #seq_length maybe later #todo: was 30 before
 
+            # for 3 classes
+            for (FOI_ID_LEVERANCIER), group_data in tqdm(groups):
 
-
-                # Now, group_data contains the data for one 'FOI_ID_LEVERANCIER' for one month
-                # skip januari for now since it has 16 days #TODO: fix this
-                if month == 1:
-                    continue
+                # skip 2 januari entries to make the length 81
+                group_data = group_data[1:]
                 month_data_x = group_data[cols].values.astype(np.float64)
                 month_data_y = group_data[self.target].values.astype(np.float64)
 
                 target_values_flat = month_data_y.argmax(axis=1)
                 targets_count.append(target_values_flat[0])
-                if len(month_data_x) < desired_length:
-                    padding = desired_length - len(month_data_x)
-                    month_data_x = np.pad(month_data_x, ((0, padding), (0, 0)), mode='constant')
-                    month_data_y = np.pad(month_data_y, ((0, padding), (0, 0)), mode='constant')
-                elif len(month_data_x) > desired_length:
-                    month_data_x = month_data_x[:desired_length]
-                    month_data_y = month_data_y[:desired_length]
+                for data in range(0, len(month_data_x), desired_length):
+                    data_x.append(month_data_x[data:data+desired_length])
+                    data_y.append(month_data_y[data:data+desired_length])
+                    # print(month_data_x[data:data+desired_length].shape)
+                # if len(month_data_x) < desired_length:
+                #     padding = desired_length - len(month_data_x)
+                #     month_data_x = np.pad(month_data_x, ((0, padding), (0, 0)), mode='constant')
+                #     month_data_y = np.pad(month_data_y, ((0, padding), (0, 0)), mode='constant')
+                # elif len(month_data_x) > desired_length:
+                #     month_data_x = month_data_x[:desired_length]
+                #     month_data_y = month_data_y[:desired_length]
 
 
-                df_stamp_month = group_data[["date"]]
-                df_stamp_month["date"] = pd.to_datetime(df_stamp_month.date)
-                if self.timeenc == 0:
-                    df_stamp_month["month"] = df_stamp_month.date.apply(
-                        lambda row: row.month, axis=1
-                    )
-                    df_stamp_month["day"] = df_stamp_month.date.apply(lambda row: row.day, axis=1)
-                    df_stamp_month["weekday"] = df_stamp_month.date.apply(
-                        lambda row: row.weekday(), axis=1
-                    )
-                    df_stamp_month["hour"] = df_stamp_month.date.apply(
-                        lambda row: row.hour, axis=1
-                    )
-                    data_stamp_month = df_stamp_month.drop(["date"], axis=1).values
-                elif self.timeenc == 1:
-                    data_stamp_month = time_features(
-                        pd.to_datetime(df_stamp_month["date"].values), freq=self.freq
-                    )
-                    data_stamp_month = data_stamp_month.transpose(1, 0)
-                # Pad data_stamp_month to a size of 30
-                if len(data_stamp_month) < desired_length:
-                    padding = desired_length - len(data_stamp_month)
-                    data_stamp_month = np.pad(data_stamp_month, ((0, padding), (0, 0)), mode='constant')
-                elif len(data_stamp_month) > desired_length:
-                    data_stamp_month = data_stamp_month[:desired_length]
+                    df_stamp_month = group_data[["date"]][data:data+desired_length]
+                    df_stamp_month["date"] = pd.to_datetime(df_stamp_month.date)
+                    if self.timeenc == 0:
+                        df_stamp_month["month"] = df_stamp_month.date.apply(
+                            lambda row: row.month, axis=1
+                        )
+                        df_stamp_month["day"] = df_stamp_month.date.apply(lambda row: row.day, axis=1)
+                        df_stamp_month["weekday"] = df_stamp_month.date.apply(
+                            lambda row: row.weekday(), axis=1
+                        )
+                        df_stamp_month["hour"] = df_stamp_month.date.apply(
+                            lambda row: row.hour, axis=1
+                        )
+                        data_stamp_month = df_stamp_month.drop(["date"], axis=1).values
+                    elif self.timeenc == 1:
+                        data_stamp_month = time_features(
+                            pd.to_datetime(df_stamp_month["date"].values), freq=self.freq
+                        )
+                        data_stamp_month = data_stamp_month.transpose(1, 0)
+                    data_stamp.append(data_stamp_month)
 
-                data_x.append(month_data_x)
-                data_y.append(month_data_y)
-                data_stamp.append(data_stamp_month)
+            # Loop over the groups
+            #todo this was for all the classes for loop
+            # for (FOI_ID_LEVERANCIER, year, month), group_data in tqdm(groups):
+
+
+
+            #     # Now, group_data contains the data for one 'FOI_ID_LEVERANCIER' for one month
+            #     # skip januari for now since it has 16 days #TODO: fix this
+            #     if month == 1:
+            #         continue
+            #     month_data_x = group_data[cols].values.astype(np.float64)
+            #     month_data_y = group_data[self.target].values.astype(np.float64)
+
+            #     target_values_flat = month_data_y.argmax(axis=1)
+            #     targets_count.append(target_values_flat[0])
+            #     if len(month_data_x) < desired_length:
+            #         padding = desired_length - len(month_data_x)
+            #         month_data_x = np.pad(month_data_x, ((0, padding), (0, 0)), mode='constant')
+            #         month_data_y = np.pad(month_data_y, ((0, padding), (0, 0)), mode='constant')
+            #     elif len(month_data_x) > desired_length:
+            #         month_data_x = month_data_x[:desired_length]
+            #         month_data_y = month_data_y[:desired_length]
+
+
+            #     df_stamp_month = group_data[["date"]]
+            #     df_stamp_month["date"] = pd.to_datetime(df_stamp_month.date)
+            #     if self.timeenc == 0:
+            #         df_stamp_month["month"] = df_stamp_month.date.apply(
+            #             lambda row: row.month, axis=1
+            #         )
+            #         df_stamp_month["day"] = df_stamp_month.date.apply(lambda row: row.day, axis=1)
+            #         df_stamp_month["weekday"] = df_stamp_month.date.apply(
+            #             lambda row: row.weekday(), axis=1
+            #         )
+            #         df_stamp_month["hour"] = df_stamp_month.date.apply(
+            #             lambda row: row.hour, axis=1
+            #         )
+            #         data_stamp_month = df_stamp_month.drop(["date"], axis=1).values
+            #     elif self.timeenc == 1:
+            #         data_stamp_month = time_features(
+            #             pd.to_datetime(df_stamp_month["date"].values), freq=self.freq
+            #         )
+            #         data_stamp_month = data_stamp_month.transpose(1, 0)
+            #     # Pad data_stamp_month to a size of 30
+            #     if len(data_stamp_month) < desired_length:
+            #         padding = desired_length - len(data_stamp_month)
+            #         data_stamp_month = np.pad(data_stamp_month, ((0, padding), (0, 0)), mode='constant')
+            #     elif len(data_stamp_month) > desired_length:
+            #         data_stamp_month = data_stamp_month[:desired_length]
+
+            #     data_x.append(month_data_x)
+            #     data_y.append(month_data_y)
+            #     data_stamp.append(data_stamp_month)
 
 
 
@@ -801,6 +849,8 @@ class Dataset_Crop(Dataset):
             num_vali = len(data_x) - num_train - num_test
 
             # shuffle the data
+            print(len(data_x), len(data_y), len(data_stamp))
+            print(np.array(data_x).shape, np.array(data_y).shape, np.array(data_stamp).shape)
             data_x, data_y, data_stamp = shuffle(np.array(data_x), np.array(data_y), np.array(data_stamp), random_state = 42)
 
             train_data_x = data_x[:num_train]
@@ -832,84 +882,12 @@ class Dataset_Crop(Dataset):
 
 
 
-        # Borders to later get the the number of groups needed for training, validation, and testing
-        # border1s = [
-        #     0,
-        #     num_train - self.seq_len,
-        #     len(groups) - num_test - self.seq_len,
-        # ]
-        # border2s = [num_train, num_train + num_vali, len(groups)]
-        # # Border split for train, val, and test
-        # border1 = border1s[self.split_id]
-        # border2 = border2s[self.split_id]
-
-        # Create a list of group keys
-        # group_keys = groups.groups.keys()
-
-        # # Split the keys into training, validation, and testing keys
-        # train_keys = list(group_keys)[:num_train]
-        # test_keys = list(group_keys)[num_train : num_train + num_test]
-        # vali_keys = list(group_keys)[-num_vali:]
-
-        # # Create training, validation, and testing groups
-        # train_groups = groups.filter(lambda x: x.name in train_keys)
-        # test_groups = groups.filter(lambda x: x.name in test_keys)
-        # vali_groups = groups.filter(lambda x: x.name in vali_keys)
-        # list_of_groups = [train_groups, vali_groups, test_groups]
-
-        # amount_features = len(cols)
-        # cols_data = df_raw.columns[1 : amount_features + 1]
-        # cur_group = list_of_groups[self.split_id]
-        # df_data = cur_group[cols_data]
-
-
-        # df_stamp = cur_group[["date"]]
-        # df_stamp["date"] = pd.to_datetime(df_stamp.date)
-        # if self.timeenc == 0:
-        #     df_stamp["month"] = df_stamp.date.apply(
-        #         lambda row: row.month, axis=1
-        #     )
-        #     df_stamp["day"] = df_stamp.date.apply(lambda row: row.day, axis=1)
-        #     df_stamp["weekday"] = df_stamp.date.apply(
-        #         lambda row: row.weekday(), axis=1
-        #     )
-        #     df_stamp["hour"] = df_stamp.date.apply(
-        #         lambda row: row.hour, axis=1
-        #     )
-        #     data_stamp = df_stamp.drop(["date"], axis=1).values
-        # elif self.timeenc == 1:
-        #     data_stamp = time_features(
-        #         pd.to_datetime(df_stamp["date"].values), freq=self.freq
-        #     )
-        #     data_stamp = data_stamp.transpose(1, 0)
-
-        # self.data_x = cur_group[cols_data].values.astype(np.float64)
-        # self.data_y = cur_group[self.target].values.astype(np.float64)
-        # self.data_stamp = data_stamp_month
-
-        # print("These are the target values", self.target, cur_group[self.target])
 
     def __getitem__(self, index):
         seq_x = self.data_x[index].copy()
         target = self.data_y[index][0].copy()
         seq_x_mark = self.data_stamp[index].copy()
         seq_y_mark = self.data_stamp[index].copy()
-        # day day day
-        # jan, feb, mar, april, may, june, july, aug, sept, oct, nov, dec, field2 jan, field2 feb
-        #
-
-        # s_begin = index
-        # s_end = s_begin + self.seq_len
-        # r_begin = s_end - self.label_len
-        # r_end = r_begin + self.label_len + self.pred_len
-
-        # seq_x = self.data_x[s_begin:s_end]
-        # seq_y = self.data_y[r_begin:r_end]
-        # seq_x_mark = self.data_stamp[s_begin:s_end]
-        # seq_y_mark = self.data_stamp[index]
-        # seq_y = self.data_y[index]
-        # print(seq_y, self.data_y, self.data_y.shape, self.data_x.shape)
-        # exit()
         return seq_x, target, seq_x_mark, seq_y_mark
 
     def __len__(self):
