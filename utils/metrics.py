@@ -1,16 +1,20 @@
+import io
+import itertools
+
+import matplotlib.pyplot as plt
 import numpy as np
+import tensorflow as tf
 from sklearn.metrics import (
+    ConfusionMatrixDisplay,
     accuracy_score,
     confusion_matrix,
-    ConfusionMatrixDisplay,
+    f1_score,
     precision_score,
     recall_score,
-    f1_score,
 )
-import matplotlib.pyplot as plt
-import io
-import tensorflow as tf
-import itertools
+
+from utils.scalar_mappable import get_scalar_mappable
+
 
 def RSE(pred, true):
     return np.sqrt(np.sum((true - pred) ** 2)) / np.sqrt(
@@ -68,15 +72,16 @@ def accuracy(pred, true):
 
 
 def precision(pred, true):
-    return precision_score(true, pred, average='micro')
+    return precision_score(true, pred, average="micro")
 
 
 def recall(pred, true):
-    return recall_score(true, pred, average='micro')
+    return recall_score(true, pred, average="micro")
 
 
 def f1(pred, true):
-    return f1_score(true, pred, average='micro')
+    return f1_score(true, pred, average="micro")
+
 
 def confusion_matrix_score(pred, true, class_names):
     class_preds = np.argmax(pred, axis=1)
@@ -85,31 +90,55 @@ def confusion_matrix_score(pred, true, class_names):
     figure = plot_confusion_matrix(cm, class_names)
     return figure
 
+
 def plot_confusion_matrix(cm, class_names):
     figure = plt.figure(figsize=(36, 36))
-    plt.imshow(cm, interpolation='nearest', cmap=plt.cm.Blues)
-    plt.title("Confusion matrix")
+    scalar_mappable = get_scalar_mappable(
+        cm.flatten(), ["#de1a24", "#bf1029", "#759116", "#3f8f29", "#056517"]
+    )
+    plt.imshow(
+        cm,
+        interpolation="nearest",
+        cmap=scalar_mappable.cmap,
+        norm=scalar_mappable.norm,
+    )
+    plt.imshow(
+        cm,
+        interpolation="nearest",
+        cmap="Blues",
+    )
+    plt.title("Confusion matrix", fontsize=50)
     plt.colorbar()
     tick_marks = np.arange(len(class_names))
-    plt.xticks(tick_marks, class_names, rotation=45)
-    plt.yticks(tick_marks, class_names)
+    plt.xticks(
+        tick_marks, class_names, rotation=45, fontsize=100 / len(class_names)
+    )
+    plt.yticks(tick_marks, class_names, fontsize=100 / len(class_names))
 
     # cm = np.around(cm.astype('float') / cm.sum(axis=1)[:, np.newaxis], decimals=2)
-    threshold = cm.max() / 2.
+    threshold = (cm.max() + cm.min()) / 2
 
     for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
         color = "white" if cm[i, j] > threshold else "black"
-        plt.text(j, i, cm[i, j], horizontalalignment="center", color=color)
+        plt.text(
+            j,
+            i,
+            cm[i, j],
+            horizontalalignment="center",
+            color=color,
+            fontsize=100 / len(class_names),
+        )
 
     plt.tight_layout()
-    plt.ylabel('True label')
-    plt.xlabel('Predicted label')
+    plt.ylabel("True label", fontsize=50)
+    plt.xlabel("Predicted label", fontsize=50)
 
     return figure
 
+
 def plot_to_image(figure):
     buf = io.BytesIO()
-    plt.savefig(buf, format='png')
+    plt.savefig(buf, format="png")
     plt.close(figure)
     buf.seek(0)
 

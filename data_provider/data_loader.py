@@ -1,15 +1,17 @@
 import os
+import warnings
+
 import numpy as np
 import pandas as pd
 import torch
-from torch.utils.data import Dataset, DataLoader, random_split
-from tqdm import tqdm
-from sklearn.utils import shuffle
-
 from sklearn.preprocessing import StandardScaler
+from sklearn.utils import shuffle
 from sklearn.utils.class_weight import compute_class_weight
+from torch.utils.data import DataLoader, Dataset, random_split
+from tqdm import tqdm
+
 from utils.timefeatures import time_features
-import warnings
+
 
 warnings.filterwarnings("ignore")
 
@@ -692,14 +694,16 @@ class Dataset_Crop(Dataset):
         type_map = ["train", "val", "test"]
         type_sort = type_map[self.split_id]
         dataset_files = ["data_x.npy", "data_y.npy", "data_stamp.npy"]
-        path = os.path.join(self.root_path ,"noordoostpolder/")
+        path = os.path.join(self.root_path, "noordoostpolder/")
         folder = os.path.join(path, type_sort)
         # check if in path train/test/val folder exists if not create
         if os.path.exists(folder):
             df_raw = pd.read_csv(os.path.join(path, self.data_path))
             target = df_raw.columns.str.startswith("class_name_late")
             self.target = list(df_raw.columns[target])
-            self.class_weights = np.load(os.path.join(folder, "class_weights.npy"))
+            self.class_weights = np.load(
+                os.path.join(folder, "class_weights.npy")
+            )
             self.data_x = np.load(os.path.join(folder, "data_x.npy"))
             self.data_y = np.load(os.path.join(folder, "data_y.npy"))
             self.data_stamp = np.load(os.path.join(folder, "data_stamp.npy"))
@@ -727,22 +731,22 @@ class Dataset_Crop(Dataset):
                 scaled_data = self.scaler.transform(df_raw[cols].values)
             else:
                 scaled_data = df_raw[cols].values
-            df_raw[cols]=scaled_data
+            df_raw[cols] = scaled_data
             # groups = df_raw.groupby("FOI_ID_LEVERANCIER")
             # print("these are the groups\n", groups)
             df_raw = df_raw[
                 ["date"] + ["FOI_ID_LEVERANCIER"] + cols + self.target
             ]
             df_raw["date"] = pd.to_datetime(df_raw.date)
-            df_raw['year'] = df_raw.date.dt.year
-            df_raw['month'] = df_raw.date.dt.month
-            groups = df_raw.groupby(['FOI_ID_LEVERANCIER'])
+            df_raw["year"] = df_raw.date.dt.year
+            df_raw["month"] = df_raw.date.dt.month
+            groups = df_raw.groupby(["FOI_ID_LEVERANCIER"])
             # groups = df_raw.groupby(['FOI_ID_LEVERANCIER', 'year', 'month'])
             data_x = []
             data_y = []
             data_stamp = []
             targets_count = []
-            desired_length = 9 #seq_length maybe later #todo: was 30 before
+            desired_length = 9  # seq_length maybe later #todo: was 30 before
 
             # for 3 classes
             for (FOI_ID_LEVERANCIER), group_data in tqdm(groups):
@@ -750,49 +754,57 @@ class Dataset_Crop(Dataset):
                 # skip 2 januari entries to make the length 81
                 group_data = group_data[1:]
                 month_data_x = group_data[cols].values.astype(np.float64)
-                month_data_y = group_data[self.target].values.astype(np.float64)
+                month_data_y = group_data[self.target].values.astype(
+                    np.float64
+                )
 
                 target_values_flat = month_data_y.argmax(axis=1)
                 targets_count.append(target_values_flat[0])
                 for data in range(0, len(month_data_x), desired_length):
-                    data_x.append(month_data_x[data:data+desired_length])
-                    data_y.append(month_data_y[data:data+desired_length])
+                    data_x.append(month_data_x[data : data + desired_length])
+                    data_y.append(month_data_y[data : data + desired_length])
                     # print(month_data_x[data:data+desired_length].shape)
-                # if len(month_data_x) < desired_length:
-                #     padding = desired_length - len(month_data_x)
-                #     month_data_x = np.pad(month_data_x, ((0, padding), (0, 0)), mode='constant')
-                #     month_data_y = np.pad(month_data_y, ((0, padding), (0, 0)), mode='constant')
-                # elif len(month_data_x) > desired_length:
-                #     month_data_x = month_data_x[:desired_length]
-                #     month_data_y = month_data_y[:desired_length]
+                    # if len(month_data_x) < desired_length:
+                    #     padding = desired_length - len(month_data_x)
+                    #     month_data_x = np.pad(month_data_x, ((0, padding), (0, 0)), mode='constant')
+                    #     month_data_y = np.pad(month_data_y, ((0, padding), (0, 0)), mode='constant')
+                    # elif len(month_data_x) > desired_length:
+                    #     month_data_x = month_data_x[:desired_length]
+                    #     month_data_y = month_data_y[:desired_length]
 
-
-                    df_stamp_month = group_data[["date"]][data:data+desired_length]
-                    df_stamp_month["date"] = pd.to_datetime(df_stamp_month.date)
+                    df_stamp_month = group_data[["date"]][
+                        data : data + desired_length
+                    ]
+                    df_stamp_month["date"] = pd.to_datetime(
+                        df_stamp_month.date
+                    )
                     if self.timeenc == 0:
                         df_stamp_month["month"] = df_stamp_month.date.apply(
                             lambda row: row.month, axis=1
                         )
-                        df_stamp_month["day"] = df_stamp_month.date.apply(lambda row: row.day, axis=1)
+                        df_stamp_month["day"] = df_stamp_month.date.apply(
+                            lambda row: row.day, axis=1
+                        )
                         df_stamp_month["weekday"] = df_stamp_month.date.apply(
                             lambda row: row.weekday(), axis=1
                         )
                         df_stamp_month["hour"] = df_stamp_month.date.apply(
                             lambda row: row.hour, axis=1
                         )
-                        data_stamp_month = df_stamp_month.drop(["date"], axis=1).values
+                        data_stamp_month = df_stamp_month.drop(
+                            ["date"], axis=1
+                        ).values
                     elif self.timeenc == 1:
                         data_stamp_month = time_features(
-                            pd.to_datetime(df_stamp_month["date"].values), freq=self.freq
+                            pd.to_datetime(df_stamp_month["date"].values),
+                            freq=self.freq,
                         )
                         data_stamp_month = data_stamp_month.transpose(1, 0)
                     data_stamp.append(data_stamp_month)
 
             # Loop over the groups
-            #todo this was for all the classes for loop
+            # todo this was for all the classes for loop
             # for (FOI_ID_LEVERANCIER, year, month), group_data in tqdm(groups):
-
-
 
             #     # Now, group_data contains the data for one 'FOI_ID_LEVERANCIER' for one month
             #     # skip januari for now since it has 16 days #TODO: fix this
@@ -810,7 +822,6 @@ class Dataset_Crop(Dataset):
             #     elif len(month_data_x) > desired_length:
             #         month_data_x = month_data_x[:desired_length]
             #         month_data_y = month_data_y[:desired_length]
-
 
             #     df_stamp_month = group_data[["date"]]
             #     df_stamp_month["date"] = pd.to_datetime(df_stamp_month.date)
@@ -842,16 +853,23 @@ class Dataset_Crop(Dataset):
             #     data_y.append(month_data_y)
             #     data_stamp.append(data_stamp_month)
 
-
-
             num_train = int(len(data_x) * 0.7)
             num_test = int(len(data_x) * 0.1)
             num_vali = len(data_x) - num_train - num_test
 
             # shuffle the data
             print(len(data_x), len(data_y), len(data_stamp))
-            print(np.array(data_x).shape, np.array(data_y).shape, np.array(data_stamp).shape)
-            data_x, data_y, data_stamp = shuffle(np.array(data_x), np.array(data_y), np.array(data_stamp), random_state = 42)
+            print(
+                np.array(data_x).shape,
+                np.array(data_y).shape,
+                np.array(data_stamp).shape,
+            )
+            data_x, data_y, data_stamp = shuffle(
+                np.array(data_x),
+                np.array(data_y),
+                np.array(data_stamp),
+                random_state=42,
+            )
 
             train_data_x = data_x[:num_train]
             test_data_x = data_x[num_train : num_train + num_test]
@@ -866,22 +884,29 @@ class Dataset_Crop(Dataset):
             train_data_stamp = data_stamp[:num_train]
             test_data_stamp = data_stamp[num_train : num_train + num_test]
             vali_data_stamp = data_stamp[-num_vali:]
-            total_data_stamp = [train_data_stamp, vali_data_stamp, test_data_stamp]
+            total_data_stamp = [
+                train_data_stamp,
+                vali_data_stamp,
+                test_data_stamp,
+            ]
 
             targets_count = sorted(targets_count)
-            self.class_weights = compute_class_weight(class_weight='balanced', classes = np.unique(targets_count), y=targets_count)
+            self.class_weights = compute_class_weight(
+                class_weight="balanced",
+                classes=np.unique(targets_count),
+                y=targets_count,
+            )
 
             self.data_x = np.array(total_data_x[self.split_id])
             self.data_y = np.array(total_data_y[self.split_id])
             self.data_stamp = np.array(total_data_stamp[self.split_id])
             # save these numpy arrays to a file
-            np.save(os.path.join(folder,"class_weights.npy") , self.class_weights)
-            np.save(os.path.join(folder,"data_x.npy") , self.data_x)
-            np.save(os.path.join(folder,"data_y.npy"), self.data_y)
-            np.save(os.path.join(folder,"data_stamp.npy"), self.data_stamp)
-
-
-
+            np.save(
+                os.path.join(folder, "class_weights.npy"), self.class_weights
+            )
+            np.save(os.path.join(folder, "data_x.npy"), self.data_x)
+            np.save(os.path.join(folder, "data_y.npy"), self.data_y)
+            np.save(os.path.join(folder, "data_stamp.npy"), self.data_stamp)
 
     def __getitem__(self, index):
         seq_x = self.data_x[index].copy()

@@ -1,21 +1,23 @@
-from data_provider.data_factory import data_provider
-from experiments.exp_basic import Exp_Basic
-from utils.tools import EarlyStopping, adjust_learning_rate, visual
-from utils.metrics import metric
-from sklearn.metrics import ConfusionMatrixDisplay
-import matplotlib.pyplot as plt
-import torch.optim.lr_scheduler as lr_scheduler
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch import optim
 import os
 import time
 import warnings
+
+import matplotlib.pyplot as plt
 import numpy as np
-from tqdm import tqdm
-from torch.utils.tensorboard import SummaryWriter
 import psutil
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim.lr_scheduler as lr_scheduler
+from sklearn.metrics import ConfusionMatrixDisplay
+from torch import optim
+from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
+
+from data_provider.data_factory import data_provider
+from experiments.exp_basic import Exp_Basic
+from utils.metrics import metric
+from utils.tools import EarlyStopping, adjust_learning_rate, visual
 
 
 warnings.filterwarnings("ignore")
@@ -27,7 +29,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         log_file_name = "runs/" + args.model_id + ".log"
         self.writer = SummaryWriter(log_dir=log_file_name)
         # self.writer.add_hparams(vars(self.args), {})
-
 
     def _build_model(self):
         model = self.model_dict[self.args.model].Model(self.args).float()
@@ -52,12 +53,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             class_weights = torch.from_numpy(class_weights)
         class_weights = class_weights.float().to(self.device)
 
-        criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
+        criterion = nn.CrossEntropyLoss(
+            weight=class_weights, label_smoothing=0.05
+        )
         return criterion
 
     def _weights_init(self, m):
         if isinstance(m, nn.Linear):
-            torch.nn.init.kaiming_uniform_(m.weight, nonlinearity='relu')
+            torch.nn.init.kaiming_uniform_(m.weight, nonlinearity="relu")
             if m.bias is not None:
                 torch.nn.init.zeros_(m.bias)
 
@@ -153,7 +156,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             patience=self.args.patience, verbose=True
         )
 
-
         model_optim = self._select_optimizer()
 
         class_weights = train_loader.dataset.class_weights
@@ -227,13 +229,18 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         outputs = self.model(
                             batch_x, batch_x_mark, batch_y, batch_y_mark
                         )
-                        self.writer.add_graph(self.model, [batch_x, batch_x_mark, batch_y, batch_y_mark])
+                        self.writer.add_graph(
+                            self.model,
+                            [batch_x, batch_x_mark, batch_y, batch_y_mark],
+                        )
                     else:
                         outputs = self.model(
                             batch_x, batch_x_mark, batch_y, batch_y_mark
                         )
-                        self.writer.add_graph(self.model, [batch_x, batch_x_mark, batch_y, batch_y_mark])
-
+                        self.writer.add_graph(
+                            self.model,
+                            [batch_x, batch_x_mark, batch_y, batch_y_mark],
+                        )
 
                     f_dim = -1 if self.args.features == "MS" else 0
                     outputs = outputs.float()
@@ -243,13 +250,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     probabilities = F.softmax(outputs, dim=1)
                     probabilities = probabilities.detach().cpu().numpy()
 
-
-                    one_hot_prob = np.eye(len(probabilities[0]))[np.argmax(probabilities[0])]
+                    one_hot_prob = np.eye(len(probabilities[0]))[
+                        np.argmax(probabilities[0])
+                    ]
                     true = batch_y.detach().cpu().numpy()
                     preds.append(one_hot_prob)
                     trues.append(true[0])
                     # Detach and move to CPU
-
 
                 if (i + 1) % 100 == 0:
                     print(
@@ -266,11 +273,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                             speed, left_time
                         )
                     )
-                    fig = plt.figure(figsize=(4,4))
+                    fig = plt.figure(figsize=(4, 4))
                     plt.bar(range(len(probabilities[0])), probabilities[0])
-                    plt.xlabel('Classes')
-                    plt.ylabel('Frequency')
-                    self.writer.add_figure('Probability Distribution', fig, global_step=i)
+                    plt.xlabel("Classes")
+                    plt.ylabel("Frequency")
+                    self.writer.add_figure(
+                        "Probability Distribution", fig, global_step=i
+                    )
                     plt.close(fig)
                     iter_count = 0
                     time_now = time.time()
@@ -282,10 +291,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 else:
                     loss.backward()
                     model_optim.step()
-                self.writer.add_scalar('Loss/train', loss, epoch)
+                self.writer.add_scalar("Loss/train", loss, epoch)
                 for name, param in self.model.named_parameters():
-                    self.writer.add_histogram('Weights/' + name, param.data, epoch)
-                    self.writer.add_histogram('Gradients/' + name, param.grad, epoch)
+                    self.writer.add_histogram(
+                        "Weights/" + name, param.data, epoch
+                    )
+                    self.writer.add_histogram(
+                        "Gradients/" + name, param.grad, epoch
+                    )
 
             print(
                 "Epoch: {} cost time: {}".format(
@@ -294,25 +307,31 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             )
             # Print memory usage
             process = psutil.Process()
-            memory_usage = process.memory_info().rss / 1024 / 1024  # in MB
-            print("Memory Usage: {:.2f} MB".format(memory_usage))
+            memory_usage = process.memory_info().rss / (
+                1024 * 1024 * 1024
+            )  # in GB
+            print("Memory Usage: {:.2f} GB".format(memory_usage))
             train_loss = np.average(train_loss)
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)
 
-            self.writer.add_scalar('Loss/vali', vali_loss, epoch)
-            self.writer.add_scalar('Loss/test', test_loss, epoch)
+            self.writer.add_scalar("Loss/vali", vali_loss, epoch)
+            self.writer.add_scalar("Loss/test", test_loss, epoch)
             # log learning rate
-            self.writer.add_scalar('Learning Rate', model_optim.param_groups[0]['lr'], epoch)
+            self.writer.add_scalar(
+                "Learning Rate", model_optim.param_groups[0]["lr"], epoch
+            )
             target_names = train_data.target
-            acc, conf_matrix, prec, rec, F1 = metric(preds, trues, target_names)
+            acc, conf_matrix, prec, rec, F1 = metric(
+                preds, trues, target_names
+            )
             # Add hyperparameters to SummaryWriter
             # self.writer.add_hparams(vars(self.args), {})
-            self.writer.add_scalar('Accuracy', acc, epoch)
-            self.writer.add_scalar('Precision', prec, epoch)
-            self.writer.add_scalar('Recall', rec, epoch)
-            self.writer.add_scalar('F1', F1, epoch)
-            self.writer.add_figure('Confusion Matrix', conf_matrix, epoch)
+            self.writer.add_scalar("Accuracy", acc, epoch)
+            self.writer.add_scalar("Precision", prec, epoch)
+            self.writer.add_scalar("Recall", rec, epoch)
+            self.writer.add_scalar("F1", F1, epoch)
+            self.writer.add_figure("Confusion Matrix", conf_matrix, epoch)
             print(
                 "Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
                     epoch + 1, train_steps, train_loss, vali_loss, test_loss
@@ -436,9 +455,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         ).reshape(shape)
                     gt = true
                     pd = predictions
-                    visual(gt, pd, os.path.join(folder_path, str(i) + ".pdf"))
-                    self.writer.add_histogram('Probability Distribution',   probabilities[0], global_step=i)
-                one_hot_prob = np.eye(len(probabilities[0]))[np.argmax(probabilities[0])]
+                    visual(gt, pd, os.path.join(folder_path, str(i) + ".png"))
+                    self.writer.add_histogram(
+                        "Probability Distribution",
+                        probabilities[0],
+                        global_step=i,
+                    )
+                one_hot_prob = np.eye(len(probabilities[0]))[
+                    np.argmax(probabilities[0])
+                ]
 
                 preds.append(one_hot_prob)
                 trues.append(true[0])
@@ -466,15 +491,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         f.write("\n")
         f.close()
 
-        np.save(
-            folder_path + "metrics.npy",
-            np.array([acc, prec, rec, F1]),
-        )
+        np.save(folder_path + "metrics.npy", np.array([acc, prec, rec, F1]))
         np.save(folder_path + "confusion_matrix.npy", conf_matrix)
         np.save(folder_path + "pred.npy", preds)
         np.save(folder_path + "true.npy", trues)
         # disp = ConfusionMatrixDisplay(confusion_matrix=conf_matrix)
-        conf_matrix.savefig(folder_path + "confusion_matrix.pdf")
+        conf_matrix.savefig(folder_path + "confusion_matrix.png")
         # plt.savefig(folder_path + "confusion_matrix.pdf")
         plt.close()
         return

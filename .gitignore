@@ -144,7 +144,9 @@ dmypy.json
 
 # PDF
 *.pdf
+*.png
 *.DS_Store
 *.txt
 runs/*
 cuda-repo-wsl-ubuntu-12-4-local_12.4.1-1_amd64.deb
+test_results/classification_noordoostpolderV2.1_3_classes_increased_batch_iTransformer_classification_crop_M_ft9_sl48_ll9_pl512_dm8_nh4_el1_dl2048_df1_fctimeF_ebTrue_dtExp_projection_0/0.png
