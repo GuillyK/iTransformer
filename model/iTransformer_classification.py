@@ -54,7 +54,7 @@ class Model(nn.Module):
             configs.d_model, configs.seq_len, bias=True
         )
         self.classifier = nn.Linear(
-            81, self.num_classes
+            configs.seq_len * 9, self.num_classes
         )
 
     def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):

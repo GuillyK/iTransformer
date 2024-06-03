@@ -676,6 +676,7 @@ class Dataset_Crop(Dataset):
             self.pred_len = size[2]
         # init
         assert flag in ["train", "val", "test"]
+        self.flag = flag
         self.type_map = {"train": 0, "val": 1, "test": 2}
         self.split_id = self.type_map[flag]
 
@@ -690,6 +691,12 @@ class Dataset_Crop(Dataset):
         self.__read_data__()
 
     def __read_data__(self):
+        """
+        This method reads the data from a CSV file and performs preprocessing steps such as scaling and feature engineering. It loads the data into the `data_x`, `data_y`, and `data_stamp` attributes of the class.
+
+        Returns:
+            None
+        """
         self.scaler = StandardScaler()
         type_map = ["train", "val", "test"]
         type_sort = type_map[self.split_id]
@@ -707,15 +714,14 @@ class Dataset_Crop(Dataset):
             self.data_x = np.load(os.path.join(folder, "data_x.npy"))
             self.data_y = np.load(os.path.join(folder, "data_y.npy"))
             self.data_stamp = np.load(os.path.join(folder, "data_stamp.npy"))
-
         else:
             os.makedirs(folder)
 
             df_raw = pd.read_csv(os.path.join(path, self.data_path))
 
             """
-            df_raw.columns: ['date', ...(other features), target feature]
-            """
+                df_raw.columns: ['date', ...(other features), target feature]
+                """
             cols = list(df_raw.columns)
             # target is columns that start with class_name_late (one hot encoding)
             target = df_raw.columns.str.startswith("class_name_late")
@@ -746,13 +752,13 @@ class Dataset_Crop(Dataset):
             data_y = []
             data_stamp = []
             targets_count = []
-            desired_length = 9  # seq_length maybe later #todo: was 30 before
+            desired_length = 12  # seq_length maybe later #todo: was 30 before
 
             # for 3 classes
             for (FOI_ID_LEVERANCIER), group_data in tqdm(groups):
 
                 # skip 2 januari entries to make the length 81
-                group_data = group_data[1:]
+                group_data = group_data[4:]
                 month_data_x = group_data[cols].values.astype(np.float64)
                 month_data_y = group_data[self.target].values.astype(
                     np.float64
@@ -762,6 +768,7 @@ class Dataset_Crop(Dataset):
                 targets_count.append(target_values_flat[0])
                 for data in range(0, len(month_data_x), desired_length):
                     data_x.append(month_data_x[data : data + desired_length])
+                    print(month_data_x[data : data + desired_length].shape)
                     data_y.append(month_data_y[data : data + desired_length])
                     # print(month_data_x[data:data+desired_length].shape)
                     # if len(month_data_x) < desired_length:
@@ -868,7 +875,7 @@ class Dataset_Crop(Dataset):
                 np.array(data_x),
                 np.array(data_y),
                 np.array(data_stamp),
-                random_state=42,
+                random_state=5,
             )
 
             train_data_x = data_x[:num_train]
@@ -884,11 +891,7 @@ class Dataset_Crop(Dataset):
             train_data_stamp = data_stamp[:num_train]
             test_data_stamp = data_stamp[num_train : num_train + num_test]
             vali_data_stamp = data_stamp[-num_vali:]
-            total_data_stamp = [
-                train_data_stamp,
-                vali_data_stamp,
-                test_data_stamp,
-            ]
+            total_data_stamp = [train_data_stamp, vali_data_stamp, test_data_stamp]
 
             targets_count = sorted(targets_count)
             self.class_weights = compute_class_weight(
@@ -901,9 +904,7 @@ class Dataset_Crop(Dataset):
             self.data_y = np.array(total_data_y[self.split_id])
             self.data_stamp = np.array(total_data_stamp[self.split_id])
             # save these numpy arrays to a file
-            np.save(
-                os.path.join(folder, "class_weights.npy"), self.class_weights
-            )
+            np.save(os.path.join(folder, "class_weights.npy"), self.class_weights)
             np.save(os.path.join(folder, "data_x.npy"), self.data_x)
             np.save(os.path.join(folder, "data_y.npy"), self.data_y)
             np.save(os.path.join(folder, "data_stamp.npy"), self.data_stamp)

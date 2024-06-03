@@ -13,9 +13,11 @@ from sklearn.metrics import ConfusionMatrixDisplay
 from torch import optim
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import sklearn.metrics
 
 from data_provider.data_factory import data_provider
 from experiments.exp_basic import Exp_Basic
+from layers.Elects_loss import EarlyRewardLoss
 from utils.metrics import metric
 from utils.tools import EarlyStopping, adjust_learning_rate, visual
 
@@ -23,11 +25,12 @@ from utils.tools import EarlyStopping, adjust_learning_rate, visual
 warnings.filterwarnings("ignore")
 
 
-class Exp_Long_Term_Forecast(Exp_Basic):
+class Exp_Long_Term_Forecast_Elects(Exp_Basic):
     def __init__(self, args):
-        super(Exp_Long_Term_Forecast, self).__init__(args)
+        super(Exp_Long_Term_Forecast_Elects, self).__init__(args)
         log_file_name = "runs/" + args.model_id + ".log"
         self.writer = SummaryWriter(log_dir=log_file_name)
+        torch.autograd.set_detect_anomaly(True)
         # self.writer.add_hparams(vars(self.args), {})
 
     def _build_model(self):
@@ -49,13 +52,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
     def _select_criterion(self, class_weights):
         # criterion = nn.MSELoss()
-        if isinstance(class_weights, np.ndarray):
-            class_weights = torch.from_numpy(class_weights)
-        class_weights = class_weights.float().to(self.device)
-
-        criterion = nn.CrossEntropyLoss(
-            weight=class_weights, label_smoothing=0.05
-        )
+        criterion = EarlyRewardLoss(alpha=0.5, epsilon=10)
         return criterion
 
     def _weights_init(self, m):
@@ -65,7 +62,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 torch.nn.init.zeros_(m.bias)
 
     def vali(self, vali_data, vali_loader, criterion):
-        total_loss = []
+        losses = []
+        stats = []
         self.model.eval()
         class_weights = torch.from_numpy(vali_loader.dataset.class_weights)
         # class_weights = class_weights.float().to(self.device)
@@ -79,66 +77,79 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 batch_y = batch_y.float().to(self.device)
                 class_weights = vali_loader.dataset.class_weights
                 # class_weights = class_weights.float().to(self.device)
-                if "PEMS" in self.args.data or "Solar" in self.args.data:
-                    batch_x_mark = None
-                    batch_y_mark = None
-                else:
-                    batch_x_mark = batch_x_mark.float().to(self.device)
-                    batch_y_mark = batch_y_mark.float().to(self.device)
 
-                # decoder input
-                # Decoder turned off for classification, dec_inp=batch_y
-
-                # dec_inp = torch.zeros_like(
-                #     batch_y[:, -self.args.pred_len :, :]
-                # ).float()
-                # dec_inp = (
-                #     torch.cat(
-                #         [batch_y[:, : self.args.label_len, :], dec_inp], dim=1
-                #     )
-                #     .float()
-                #     .to(self.device)
-                # )
+                batch_x_mark = batch_x_mark.float().to(self.device)
+                batch_y_mark = batch_y_mark.float().to(self.device)
+                # print(f"{batch_y=}")
+                # print(f"{batch_y.shape=}")
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if self.args.output_attention:
-                            outputs = self.model(
-                                batch_x, batch_x_mark, batch_y, batch_y_mark
+                            (
+                                log_class_probabilities,
+                                probability_stopping,
+                                predictions_at_t_stop,
+                                t_stop,
+                            ) = self.model.predict(
+                                batch_x, batch_x_mark, batch_y, batch_y_mark, self.device
                             )
                         else:
-                            outputs = self.model(
-                                batch_x, batch_x_mark, batch_y, batch_y_mark
+                            (
+                                log_class_probabilities,
+                                probability_stopping,
+                                predictions_at_t_stop,
+                                t_stop,
+                            ) = self.model.predict(
+                                batch_x, batch_x_mark, batch_y, batch_y_mark, self.device
                             )
                 else:
                     if self.args.output_attention:
-                        outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark
+                        (
+                            log_class_probabilities,
+                            probability_stopping,
+                            predictions_at_t_stop,
+                            t_stop,
+                        ) = self.model.predict(
+                            batch_x, batch_x_mark, batch_y, batch_y_mark, self.device
                         )
                     else:
-                        outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark
+                        (
+                            log_class_probabilities,
+                            probability_stopping,
+                            predictions_at_t_stop,
+                            t_stop,
+                        ) = self.model.predict(
+                            batch_x, batch_x_mark, batch_y, batch_y_mark, self.device
                         )
-                f_dim = -1 if self.args.features == "MS" else 0
-                # outputs = outputs[:, -self.args.pred_len :, f_dim:]
-                # batch_y = batch_y[:, -self.args.pred_len :, f_dim:].to(
-                #     self.device
-                # )
-                outputs = outputs.float()
 
-                pred = outputs
-                true = batch_y
-                # if not pred.device == self.device or not true.device == self.device:
-                #     print(pred.device, true.device)
-                #     print("Warning: pred and true are not on the same device as criterion")
-                loss = criterion(pred, true)
-                loss = loss.detach().cpu().numpy()
-                total_loss.append(loss)
-                pred.detach().cpu().numpy()
-                true.detach().cpu().numpy()
-        total_loss = np.average(total_loss)
+                loss, stat = criterion(
+                    log_class_probabilities,
+                    probability_stopping,
+                    batch_y,
+                    return_stats=True,
+                )
+                stat["loss"] = loss.cpu().detach().numpy()
+                stat["probability_stopping"] = (
+                    probability_stopping.cpu().detach().numpy()
+                )
+                stat["class_probabilities"] = (
+                    log_class_probabilities.exp().cpu().detach().numpy()
+                )
+                stat["predictions_at_t_stop"] = (
+                    predictions_at_t_stop.unsqueeze(-1).cpu().detach().numpy()
+                )
+                stat["t_stop"] = t_stop.unsqueeze(-1).cpu().detach().numpy()
+                stat["targets"] = batch_y.argmax(dim=-1).cpu().detach().numpy()
+
+                stats.append(stat)
+
+                losses.append(loss.cpu().detach().numpy())
+
+        stats = {k: np.vstack([dic[k] for dic in stats]) for k in stats[0]}
+
         self.model.train()
-        return total_loss
+        return np.stack(losses).mean(), stats
 
     def train(self, setting):
         train_data, train_loader = self._get_data(flag="train")
@@ -177,85 +188,56 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(
                 train_loader
             ):
-
+                if i == 32:
+                    break
                 class_weights = train_loader.dataset.class_weights
                 # for j in sequences:
                 iter_count += 1
                 model_optim.zero_grad()
                 batch_x = batch_x.float().to(self.device)
-
                 batch_y = batch_y.float().to(self.device)
-                if "PEMS" in self.args.data or "Solar" in self.args.data:
-                    batch_x_mark = None
-                    batch_y_mark = None
-                else:
-                    batch_x_mark = batch_x_mark.float().to(self.device)
-                    batch_y_mark = batch_y_mark.float().to(self.device)
-
-                # decoder input
-                # batch_y = torch.zeros_like(
-                #     batch_y[:, -self.args.pred_len :, :]
-                # ).float()
-                # batch_y = (
-                #     torch.cat(
-                #         [batch_y[:, : self.args.label_len, :], batch_y], dim=1
-                #     )
-                #     .float()
-                #     .to(self.device)
-                # )
+                batch_x_mark = batch_x_mark.float().to(self.device)
+                batch_y_mark = batch_y_mark.float().to(self.device)
 
                 # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
-                        if self.args.output_attention:
-                            outputs = self.model(
-                                batch_x, batch_x_mark, batch_y, batch_y_mark
-                            )[0]
-                        else:
-                            outputs = self.model(
-                                batch_x, batch_x_mark, batch_y, batch_y_mark
-                            )
 
-                        f_dim = -1 if self.args.features == "MS" else 0
-                        print("using amp")
-                        outputs = outputs[:, -self.args.pred_len :, f_dim:]
-                        batch_y = batch_y[:, -self.args.pred_len :, f_dim:].to(
-                            self.device
-                        )
-                        loss = criterion(outputs, batch_y)
-                        train_loss.append(loss.item())
+                if self.args.output_attention:
+                    log_class_probabilities, probability_stopping = self.model(
+                        batch_x, batch_x_mark, batch_y, batch_y_mark
+                    )
+                    self.writer.add_graph(
+                        self.model,
+                        [batch_x, batch_x_mark, batch_y, batch_y_mark],
+                    )
                 else:
-                    if self.args.output_attention:
-                        outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark
-                        )
-                        self.writer.add_graph(
-                            self.model,
-                            [batch_x, batch_x_mark, batch_y, batch_y_mark],
-                        )
-                    else:
-                        outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark
-                        )
-                        self.writer.add_graph(
-                            self.model,
-                            [batch_x, batch_x_mark, batch_y, batch_y_mark],
-                        )
+                    log_class_probabilities, probability_stopping = self.model(
+                        batch_x, batch_x_mark, batch_y, batch_y_mark
+                    )
+                    self.writer.add_graph(
+                        self.model,
+                        [batch_x, batch_x_mark, batch_y, batch_y_mark],
+                    )
+                    # print(log_class_probabilities, probability_stopping)
+                    # print(
+                    #     log_class_probabilities.shape,
+                    #     probability_stopping.shape,
+                    # )
+                    loss = criterion(
+                        log_class_probabilities, probability_stopping, batch_y
+                    )
 
-                    f_dim = -1 if self.args.features == "MS" else 0
-                    outputs = outputs.float()
-                    loss = criterion(outputs, batch_y)
                     train_loss.append(loss.item())
 
-                    probabilities = F.softmax(outputs, dim=1)
-                    probabilities = probabilities.detach().cpu().numpy()
-
-                    one_hot_prob = np.eye(len(probabilities[0]))[
-                        np.argmax(probabilities[0])
-                    ]
-                    true = batch_y.detach().cpu().numpy()
-                    preds.append(one_hot_prob)
-                    trues.append(true[0])
+                    # probabilities = (log_class_probabilities.exp())
+                    # probabilities = probabilities.detach().cpu().numpy()
+                    # print(f"{probabilities=}")
+                    # print(f"{probabilities.shape=}")
+                    # one_hot_prob = np.eye(len(probabilities[0]))[
+                    #     np.argmax(probabilities[0])
+                    # ]
+                    # true = batch_y.detach().cpu().numpy()
+                    # preds.append(one_hot_prob)
+                    # trues.append(true[0])
                     # Detach and move to CPU
 
                 if (i + 1) % 100 == 0:
@@ -273,14 +255,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                             speed, left_time
                         )
                     )
-                    fig = plt.figure(figsize=(4, 4))
-                    plt.bar(range(len(probabilities[0])), probabilities[0])
-                    plt.xlabel("Classes")
-                    plt.ylabel("Frequency")
-                    self.writer.add_figure(
-                        "Probability Distribution", fig, global_step=i
-                    )
-                    plt.close(fig)
+                    # fig = plt.figure(figsize=(4, 4))
+                    # plt.bar(range(len(probabilities[0])), probabilities[0])
+                    # plt.xlabel("Classes")
+                    # plt.ylabel("Frequency")
+                    # self.writer.add_figure(
+                    #     "Probability Distribution", fig, global_step=i
+                    # )
+                    # plt.close(fig)
                     iter_count = 0
                     time_now = time.time()
 
@@ -312,8 +294,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             )  # in GB
             print("Memory Usage: {:.2f} GB".format(memory_usage))
             train_loss = np.average(train_loss)
-            vali_loss = self.vali(vali_data, vali_loader, criterion)
-            test_loss = self.vali(test_data, test_loader, criterion)
+            print("start validation")
+            vali_loss, stats = self.vali(vali_data, vali_loader, criterion)
+            print("start testing")
+            test_loss, test_stats = self.vali(
+                test_data, test_loader, criterion
+            )
 
             self.writer.add_scalar("Loss/vali", vali_loss, epoch)
             self.writer.add_scalar("Loss/test", test_loss, epoch)
@@ -322,8 +308,38 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 "Learning Rate", model_optim.param_groups[0]["lr"], epoch
             )
             target_names = train_data.target
-            acc, conf_matrix, prec, rec, F1 = metric(
-                preds, trues, target_names
+            # acc, conf_matrix, prec, rec, F1 = metric(
+            #     preds, trues, target_names
+            # )
+            print("prediction", stats["predictions_at_t_stop"][:, 0])
+            print(f"{stats['targets']=}")
+            print(f"{stats['predictions_at_t_stop'].shape=}")
+            print(f"{stats['targets'].shape=}")
+            prec, rec, F1, support = (
+                sklearn.metrics.precision_recall_fscore_support(
+                    y_pred=stats["predictions_at_t_stop"][:, 0],
+                    y_true=stats["targets"],
+                    average="macro",
+                    zero_division=0,
+                )
+            )
+            acc = sklearn.metrics.accuracy_score(
+                y_pred=stats["predictions_at_t_stop"][:, 0],
+                y_true=stats["targets"],
+            )
+            kappa = sklearn.metrics.cohen_kappa_score(
+                stats["predictions_at_t_stop"][:, 0], stats["targets"]
+            )
+
+            classification_loss = stats["classification_loss"].mean()
+            earliness_reward = stats["earliness_reward"].mean()
+            earliness = 1 - (
+                stats["t_stop"].mean() / (self.args.seq_len - 1)
+            )
+
+            stats["confusion_matrix"] = sklearn.metrics.confusion_matrix(
+                y_pred=stats["predictions_at_t_stop"][:, 0],
+                y_true=stats["targets"],
             )
             # Add hyperparameters to SummaryWriter
             # self.writer.add_hparams(vars(self.args), {})
@@ -331,7 +347,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             self.writer.add_scalar("Precision", prec, epoch)
             self.writer.add_scalar("Recall", rec, epoch)
             self.writer.add_scalar("F1", F1, epoch)
-            self.writer.add_figure("Confusion Matrix", conf_matrix, epoch)
+            self.writer.add_scalar("Kappa", kappa, epoch)
+            self.writer.add_scalar("Classification Loss", classification_loss, epoch)
+            self.writer.add_scalar("Earliness Reward", earliness_reward, epoch)
+            self.writer.add_scalar("Earliness", earliness, epoch)
+            self.writer.add_figure("Confusion Matrix", stats["confusion_matrix"], epoch)
             print(
                 "Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
                     epoch + 1, train_steps, train_loss, vali_loss, test_loss
@@ -363,10 +383,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             )
         preds = []
         trues = []
+        stats = []
+        losses = []
         folder_path = "./test_results/" + setting + "/"
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
-
+        class_weights = test_loader.dataset.class_weights
+        criterion = self._select_criterion(class_weights)
         self.model.eval()
         with torch.no_grad():
             for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(
@@ -376,54 +399,76 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
 
-                if "PEMS" in self.args.data or "Solar" in self.args.data:
-                    batch_x_mark = None
-                    batch_y_mark = None
-                else:
-                    batch_x_mark = batch_x_mark.float().to(self.device)
-                    batch_y_mark = batch_y_mark.float().to(self.device)
+                batch_x_mark = batch_x_mark.float().to(self.device)
+                batch_y_mark = batch_y_mark.float().to(self.device)
 
-                # decoder input
-                # dec_inp = torch.zeros_like(
-                #     batch_y[:, -self.args.pred_len :, :]
-                # ).float()
-                # dec_inp = (
-                #     torch.cat(
-                #         [batch_y[:, : self.args.label_len, :], dec_inp], dim=1
-                #     )
-                #     .float()
-                #     .to(self.device)
-                # )
                 # encoder - decoder
                 if self.args.use_amp:
                     with torch.cuda.amp.autocast():
                         if self.args.output_attention:
-                            outputs = self.model(
+                            (
+                                log_class_probabilities,
+                                probability_stopping,
+                                predictions_at_t_stop,
+                                t_stop,
+                            ) = self.model.predict(
                                 batch_x, batch_x_mark, batch_y, batch_y_mark
                             )
                         else:
-                            outputs = self.model(
+                            (
+                                log_class_probabilities,
+                                probability_stopping,
+                                predictions_at_t_stop,
+                                t_stop,
+                            ) = self.model.predict(
                                 batch_x, batch_x_mark, batch_y, batch_y_mark
                             )
                 else:
                     if self.args.output_attention:
-                        outputs = self.model(
+                        (
+                            log_class_probabilities,
+                            probability_stopping,
+                            predictions_at_t_stop,
+                            t_stop,
+                        ) = self.model.predict(
                             batch_x, batch_x_mark, batch_y, batch_y_mark
                         )
 
                     else:
-                        outputs = self.model(
+                        (
+                            log_class_probabilities,
+                            probability_stopping,
+                            predictions_at_t_stop,
+                            t_stop,
+                        ) = self.model.predict(
                             batch_x, batch_x_mark, batch_y, batch_y_mark
                         )
 
-                f_dim = -1 if self.args.features == "MS" else 0
-                # outputs = outputs[:, -self.args.pred_len :, f_dim:]
-                # batch_y = batch_y[:, -self.args.pred_len :, f_dim:].to(
-                #     self.device
-                # )
-                outputs = outputs.float()
+                loss, stat = criterion(
+                    log_class_probabilities,
+                    probability_stopping,
+                    batch_y,
+                    return_stats=True,
+                )
                 # Apply softmax to get probabilities
-                probabilities = F.softmax(outputs, dim=1)
+                stat["loss"] = loss.cpu().detach().numpy()
+                stat["probability_stopping"] = (
+                    probability_stopping.cpu().detach().numpy()
+                )
+                stat["class_probabilities"] = (
+                    log_class_probabilities.exp().cpu().detach().numpy()
+                )
+                stat["predictions_at_t_stop"] = (
+                    predictions_at_t_stop.unsqueeze(-1).cpu().detach().numpy()
+                )
+                stat["t_stop"] = t_stop.unsqueeze(-1).cpu().detach().numpy()
+                stat["targets"] = y_true.cpu().detach().numpy()
+
+                stats.append(stat)
+                losses.append(loss.cpu().detach().numpy())
+                probabilities = F.softmax(
+                    np.exp(log_class_probabilities), dim=1
+                )
 
                 # Detach and move to CPU
                 probabilities = probabilities.detach().cpu().numpy()
@@ -432,19 +477,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 # print(probabilities.shape, probabilities)
                 predictions = probabilities
                 # predictions = np.argmax(probabilities, axis=1)
-                outputs = outputs.detach().cpu().numpy()
                 batch_y = batch_y.detach().cpu().numpy()
-                # if test_data.scale and self.args.inverse:
-                #     shape = outputs.shape
-                #     outputs = test_data.inverse_transform(
-                #         outputs.squeeze(0)
-                #     ).reshape(shape)
-                #     batch_y = test_data.inverse_transform(
-                #         batch_y.squeeze(0)
-                #     ).reshape(shape)
 
-                # pred = outputs
-                true = batch_y
+                # true = batch_y
 
                 if i % 100 == 0:
                     input = batch_x.detach().cpu().numpy()
@@ -453,7 +488,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         input = test_data.inverse_transform(
                             input.squeeze(0)
                         ).reshape(shape)
-                    gt = true
+                    gt = batch_y
                     pd = predictions
                     visual(gt, pd, os.path.join(folder_path, str(i) + ".pdf"))
                     self.writer.add_histogram(
@@ -499,7 +534,33 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         conf_matrix.savefig(folder_path + "confusion_matrix.png")
         # plt.savefig(folder_path + "confusion_matrix.pdf")
         plt.close()
-        return
+        # list of dicts to dict of lists
+        stats = {k: np.vstack([dic[k] for dic in stats]) for k in stats[0]}
+        precision, recall, fscore, support = (
+            sklearn.metrics.precision_recall_fscore_support(
+                y_pred=stats["predictions_at_t_stop"][:, 0],
+                y_true=stats["targets"][:, 0],
+                average="macro",
+                zero_division=0,
+            )
+        )
+        accuracy = sklearn.metrics.accuracy_score(
+            y_pred=stats["predictions_at_t_stop"][:, 0],
+            y_true=stats["targets"][:, 0],
+        )
+        kappa = sklearn.metrics.cohen_kappa_score(
+            stats["predictions_at_t_stop"][:, 0], stats["targets"][:, 0]
+        )
+
+        classification_loss = stats["classification_loss"].mean()
+        earliness_reward = stats["earliness_reward"].mean()
+        earliness = 1 - (stats["t_stop"].mean() / (args.sequencelength - 1))
+
+        stats["confusion_matrix"] = sklearn.metrics.confusion_matrix(
+            y_pred=stats["predictions_at_t_stop"][:, 0],
+            y_true=stats["targets"][:, 0],
+        )
+        return np.stack(losses).mean(), stats
 
     def predict(self, setting, load=False):
         pred_data, pred_loader = self._get_data(flag="pred")

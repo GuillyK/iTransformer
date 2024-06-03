@@ -72,15 +72,15 @@ def accuracy(pred, true):
 
 
 def precision(pred, true):
-    return precision_score(true, pred, average="micro")
+    return precision_score(true, pred, average="macro")
 
 
 def recall(pred, true):
-    return recall_score(true, pred, average="micro")
+    return recall_score(true, pred, average="macro")
 
 
 def f1(pred, true):
-    return f1_score(true, pred, average="micro")
+    return f1_score(true, pred, average="macro")
 
 
 def confusion_matrix_score(pred, true, class_names):

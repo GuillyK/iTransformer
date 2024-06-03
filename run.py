@@ -1,12 +1,19 @@
 import argparse
+import random
+
+import numpy as np
 import torch
+
 from experiments.exp_long_term_forecasting import Exp_Long_Term_Forecast
+from experiments.exp_long_term_forecasting_elects import (
+    Exp_Long_Term_Forecast_Elects,
+)
 from experiments.exp_long_term_forecasting_partial import (
     Exp_Long_Term_Forecast_Partial,
 )
-import random
-import numpy as np
-torch.multiprocessing.set_sharing_strategy('file_system')
+
+
+torch.multiprocessing.set_sharing_strategy("file_system")
 if __name__ == "__main__":
     fix_seed = 2023
     random.seed(fix_seed)
@@ -245,7 +252,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num_classes",
         type=int,
-        default=3,
+        default=6,
         help="number of classes for classification",
     )
     parser.add_argument(
@@ -281,6 +288,7 @@ if __name__ == "__main__":
         Exp = Exp_Long_Term_Forecast_Partial
     else:  # MTSF: multivariate time series forecasting
         Exp = Exp_Long_Term_Forecast
+        # Exp = Exp_Long_Term_Forecast_Elects
 
     if args.is_training:
         for ii in range(args.itr):
