@@ -322,15 +322,31 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 "Learning Rate", model_optim.param_groups[0]["lr"], epoch
             )
             target_names = train_data.target
-            acc, conf_matrix, prec, rec, F1 = metric(
-                preds, trues, target_names
+            (
+                acc,
+                conf_matrix,
+                prec,
+                prec_micro,
+                rec,
+                rec_micro,
+                F1,
+                F1_micro,
+            ) = metric(preds, trues, target_names)
+
+            print(
+                "acc:{}, prec:{}, prec_micro:{}, recall:{}, recall_micro{}, F1:{}, F1_micro{}".format(
+                    acc, prec, prec_micro, rec, rec_micro, F1, F1_micro
+                )
             )
             # Add hyperparameters to SummaryWriter
             # self.writer.add_hparams(vars(self.args), {})
             self.writer.add_scalar("Accuracy", acc, epoch)
             self.writer.add_scalar("Precision", prec, epoch)
+            self.writer.add_scalar("Precision_micro", prec_micro, epoch)
             self.writer.add_scalar("Recall", rec, epoch)
+            self.writer.add_scalar("Recall_micro", rec_micro, epoch)
             self.writer.add_scalar("F1", F1, epoch)
+            self.writer.add_scalar("F1_micro", F1_micro, epoch)
             self.writer.add_figure("Confusion Matrix", conf_matrix, epoch)
             print(
                 "Epoch: {0}, Steps: {1} | Train Loss: {2:.7f} Vali Loss: {3:.7f} Test Loss: {4:.7f}".format(
@@ -480,9 +496,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
         target_names = test_data.target
-        acc, conf_matrix, prec, rec, F1 = metric(preds, trues, target_names)
+        acc, conf_matrix, prec, prec_micro, rec, rec_micro, F1, F1_micro = (
+            metric(preds, trues, target_names)
+        )
 
-        print("acc:{}, prec:{}, recall:{}, F1:{}".format(acc, prec, rec, F1))
+        print(
+            "acc:{}, prec:{}, prec_micro:{}, recall:{}, recall_micro{}, F1:{}, F1_micro{}".format(
+                acc, prec, prec_micro, rec, rec_micro, F1, F1_micro
+            )
+        )
 
         f = open("result_long_term_forecast.txt", "a")
         f.write(setting + "  \n")

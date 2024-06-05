@@ -59,11 +59,11 @@ def metric(pred, true, target_names):
 
     acc = accuracy(pred, true)
     conf_matrix = confusion_matrix_score(pred, true, target_names)
-    prec = precision(pred, true)
-    rec = recall(pred, true)
-    F1 = f1(pred, true)
+    prec, prec_micro = precision(pred, true)
+    rec, rec_micro = recall(pred, true)
+    F1, F1_micro = f1(pred, true)
 
-    return acc, conf_matrix, prec, rec, F1
+    return acc, conf_matrix, prec, prec_micro, rec, rec_micro, F1, F1_micro
 
 
 # Metrics for time series classification
@@ -72,15 +72,21 @@ def accuracy(pred, true):
 
 
 def precision(pred, true):
-    return precision_score(true, pred, average="macro")
+    return precision_score(true, pred, average="macro"), precision_score(
+        true, pred, average="micro"
+    )
 
 
 def recall(pred, true):
-    return recall_score(true, pred, average="macro")
+    return recall_score(true, pred, average="macro"), recall_score(
+        true, pred, average="micro"
+    )
 
 
 def f1(pred, true):
-    return f1_score(true, pred, average="macro")
+    return f1_score(true, pred, average="macro"), f1_score(
+        true, pred, average="micro"
+    )
 
 
 def confusion_matrix_score(pred, true, class_names):
@@ -102,11 +108,7 @@ def plot_confusion_matrix(cm, class_names):
         cmap=scalar_mappable.cmap,
         norm=scalar_mappable.norm,
     )
-    plt.imshow(
-        cm,
-        interpolation="nearest",
-        cmap="Blues",
-    )
+    plt.imshow(cm, interpolation="nearest", cmap="Blues")
     plt.title("Confusion matrix", fontsize=50)
     plt.colorbar()
     tick_marks = np.arange(len(class_names))
