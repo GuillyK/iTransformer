@@ -72,7 +72,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         criterion = self._select_criterion(class_weights)
 
         with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark, padding_mask) in enumerate(
                 vali_loader
             ):
                 batch_x = batch_x.float().to(self.device)
@@ -113,11 +113,11 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 else:
                     if self.args.output_attention:
                         outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark
+                            batch_x, batch_x_mark, batch_y, batch_y_mark, padding_mask
                         )
                     else:
                         outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark
+                            batch_x, batch_x_mark, batch_y, batch_y_mark, padding_mask
                         )
                 f_dim = -1 if self.args.features == "MS" else 0
                 # outputs = outputs[:, -self.args.pred_len :, f_dim:]
@@ -174,7 +174,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
             self.model.train()
             epoch_time = time.time()
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(
+
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark, padding_mask) in enumerate(
                 train_loader
             ):
 
@@ -227,19 +228,19 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 else:
                     if self.args.output_attention:
                         outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark
+                            batch_x, batch_x_mark, batch_y, batch_y_mark, padding_mask
                         )
                         self.writer.add_graph(
                             self.model,
-                            [batch_x, batch_x_mark, batch_y, batch_y_mark],
+                            [batch_x, batch_x_mark, batch_y, batch_y_mark,padding_mask],
                         )
                     else:
                         outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark
+                            batch_x, batch_x_mark, batch_y, batch_y_mark, padding_mask
                         )
                         self.writer.add_graph(
                             self.model,
-                            [batch_x, batch_x_mark, batch_y, batch_y_mark],
+                            [batch_x, batch_x_mark, batch_y, batch_y_mark,padding_mask],
                         )
 
                     f_dim = -1 if self.args.features == "MS" else 0
@@ -379,13 +380,16 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             )
         preds = []
         trues = []
+        accuracy_over_time = []
+
+        seq_end_lengths = np.load("/home/guilly/iTransformer/dataset/noordoostpolder/test/seq_end_lengths.npy")
         folder_path = "./test_results/" + setting + "/"
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
         self.model.eval()
         with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(
+            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark, padding_mask) in enumerate(
                 tqdm(test_loader)
             ):
 
@@ -424,12 +428,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 else:
                     if self.args.output_attention:
                         outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark
+                            batch_x, batch_x_mark, batch_y, batch_y_mark, padding_mask
                         )
 
                     else:
                         outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark
+                            batch_x, batch_x_mark, batch_y, batch_y_mark, padding_mask
                         )
 
                 f_dim = -1 if self.args.features == "MS" else 0
@@ -483,6 +487,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                 preds.append(one_hot_prob)
                 trues.append(true[0])
+                a
 
         preds = np.array(preds)  # [Batch, no_classes]
         trues = np.array(trues)

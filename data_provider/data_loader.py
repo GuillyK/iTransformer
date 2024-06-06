@@ -7,6 +7,8 @@ import torch
 from sklearn.preprocessing import StandardScaler
 from sklearn.utils import shuffle
 from sklearn.utils.class_weight import compute_class_weight
+from torch.nn.functional import pad
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
 
@@ -704,6 +706,8 @@ class Dataset_Crop(Dataset):
         path = os.path.join(self.root_path, "noordoostpolder/")
         folder = os.path.join(path, type_sort)
         # check if in path train/test/val folder exists if not create
+        if False:
+            pass
         if os.path.exists(folder):
             df_raw = pd.read_csv(os.path.join(path, self.data_path))
             target = df_raw.columns.str.startswith("class_name_late")
@@ -714,6 +718,7 @@ class Dataset_Crop(Dataset):
             self.data_x = np.load(os.path.join(folder, "data_x.npy"))
             self.data_y = np.load(os.path.join(folder, "data_y.npy"))
             self.data_stamp = np.load(os.path.join(folder, "data_stamp.npy"))
+            self.masks = np.load(os.path.join(folder, "masks.npy"))
         else:
             os.makedirs(folder)
 
@@ -752,114 +757,78 @@ class Dataset_Crop(Dataset):
             data_y = []
             data_stamp = []
             targets_count = []
-            desired_length = 12  # seq_length maybe later #todo: was 30 before
+            seq_end_lengths = []
+            desired_length = (
+                27 - 8
+            )  # seq_length maybe later #todo: was 30 before
 
             # for 3 classes
             for (FOI_ID_LEVERANCIER), group_data in tqdm(groups):
 
                 # skip 2 januari entries to make the length 81
-                group_data = group_data[4:]
+                group_data = group_data[8:]
                 month_data_x = group_data[cols].values.astype(np.float64)
                 month_data_y = group_data[self.target].values.astype(
                     np.float64
                 )
 
+                # create distribution of available timestamps, with mean at middle of the year
+                normal = torch.distributions.Normal(
+                    len(group_data) / 2, len(group_data) / 4
+                )
+                seq_end = abs(int(normal.sample()))
+                if seq_end >= len(group_data):
+                    seq_end = len(group_data) - 1
+                elif seq_end < 0:
+                    seq_end = 0
+                seq_end_lengths.append(seq_end)
+
                 target_values_flat = month_data_y.argmax(axis=1)
                 targets_count.append(target_values_flat[0])
-                for data in range(0, len(month_data_x), desired_length):
-                    data_x.append(month_data_x[data : data + desired_length])
-                    print(month_data_x[data : data + desired_length].shape)
-                    data_y.append(month_data_y[data : data + desired_length])
-                    # print(month_data_x[data:data+desired_length].shape)
-                    # if len(month_data_x) < desired_length:
-                    #     padding = desired_length - len(month_data_x)
-                    #     month_data_x = np.pad(month_data_x, ((0, padding), (0, 0)), mode='constant')
-                    #     month_data_y = np.pad(month_data_y, ((0, padding), (0, 0)), mode='constant')
-                    # elif len(month_data_x) > desired_length:
-                    #     month_data_x = month_data_x[:desired_length]
-                    #     month_data_y = month_data_y[:desired_length]
+                data_x.append(month_data_x[0:seq_end])
+                # print(month_data_x[data : data + desired_length].shape)
+                data_y.append(month_data_y[0:seq_end])
+                # print(month_data_x[data:data+desired_length].shape)
+                # if len(month_data_x) < desired_length:
+                #     padding = desired_length - len(month_data_x)
+                #     month_data_x = np.pad(month_data_x, ((0, padding), (0, 0)), mode='constant')
+                #     month_data_y = np.pad(month_data_y, ((0, padding), (0, 0)), mode='constant')
+                # elif len(month_data_x) > desired_length:
+                #     month_data_x = month_data_x[:desired_length]
+                #     month_data_y = month_data_y[:desired_length]
 
-                    df_stamp_month = group_data[["date"]][
-                        data : data + desired_length
-                    ]
-                    df_stamp_month["date"] = pd.to_datetime(
-                        df_stamp_month.date
+                df_stamp_month = group_data[["date"]][0:seq_end]
+                df_stamp_month["date"] = pd.to_datetime(df_stamp_month.date)
+                if self.timeenc == 0:
+                    df_stamp_month["month"] = df_stamp_month.date.apply(
+                        lambda row: row.month, axis=1
                     )
-                    if self.timeenc == 0:
-                        df_stamp_month["month"] = df_stamp_month.date.apply(
-                            lambda row: row.month, axis=1
-                        )
-                        df_stamp_month["day"] = df_stamp_month.date.apply(
-                            lambda row: row.day, axis=1
-                        )
-                        df_stamp_month["weekday"] = df_stamp_month.date.apply(
-                            lambda row: row.weekday(), axis=1
-                        )
-                        df_stamp_month["hour"] = df_stamp_month.date.apply(
-                            lambda row: row.hour, axis=1
-                        )
-                        data_stamp_month = df_stamp_month.drop(
-                            ["date"], axis=1
-                        ).values
-                    elif self.timeenc == 1:
-                        data_stamp_month = time_features(
-                            pd.to_datetime(df_stamp_month["date"].values),
-                            freq=self.freq,
-                        )
-                        data_stamp_month = data_stamp_month.transpose(1, 0)
-                    data_stamp.append(data_stamp_month)
+                    df_stamp_month["day"] = df_stamp_month.date.apply(
+                        lambda row: row.day, axis=1
+                    )
+                    df_stamp_month["weekday"] = df_stamp_month.date.apply(
+                        lambda row: row.weekday(), axis=1
+                    )
+                    df_stamp_month["hour"] = df_stamp_month.date.apply(
+                        lambda row: row.hour, axis=1
+                    )
+                    data_stamp_month = df_stamp_month.drop(
+                        ["date"], axis=1
+                    ).values
+                elif self.timeenc == 1:
+                    data_stamp_month = time_features(
+                        pd.to_datetime(df_stamp_month["date"].values),
+                        freq=self.freq,
+                    )
+                    data_stamp_month = data_stamp_month.transpose(1, 0)
+                data_stamp.append(data_stamp_month)
 
-            # Loop over the groups
-            # todo this was for all the classes for loop
-            # for (FOI_ID_LEVERANCIER, year, month), group_data in tqdm(groups):
+            max_length = int(max(map(len, data_x)))
+            print(max_length)
 
-            #     # Now, group_data contains the data for one 'FOI_ID_LEVERANCIER' for one month
-            #     # skip januari for now since it has 16 days #TODO: fix this
-            #     if month == 1:
-            #         continue
-            #     month_data_x = group_data[cols].values.astype(np.float64)
-            #     month_data_y = group_data[self.target].values.astype(np.float64)
-
-            #     target_values_flat = month_data_y.argmax(axis=1)
-            #     targets_count.append(target_values_flat[0])
-            #     if len(month_data_x) < desired_length:
-            #         padding = desired_length - len(month_data_x)
-            #         month_data_x = np.pad(month_data_x, ((0, padding), (0, 0)), mode='constant')
-            #         month_data_y = np.pad(month_data_y, ((0, padding), (0, 0)), mode='constant')
-            #     elif len(month_data_x) > desired_length:
-            #         month_data_x = month_data_x[:desired_length]
-            #         month_data_y = month_data_y[:desired_length]
-
-            #     df_stamp_month = group_data[["date"]]
-            #     df_stamp_month["date"] = pd.to_datetime(df_stamp_month.date)
-            #     if self.timeenc == 0:
-            #         df_stamp_month["month"] = df_stamp_month.date.apply(
-            #             lambda row: row.month, axis=1
-            #         )
-            #         df_stamp_month["day"] = df_stamp_month.date.apply(lambda row: row.day, axis=1)
-            #         df_stamp_month["weekday"] = df_stamp_month.date.apply(
-            #             lambda row: row.weekday(), axis=1
-            #         )
-            #         df_stamp_month["hour"] = df_stamp_month.date.apply(
-            #             lambda row: row.hour, axis=1
-            #         )
-            #         data_stamp_month = df_stamp_month.drop(["date"], axis=1).values
-            #     elif self.timeenc == 1:
-            #         data_stamp_month = time_features(
-            #             pd.to_datetime(df_stamp_month["date"].values), freq=self.freq
-            #         )
-            #         data_stamp_month = data_stamp_month.transpose(1, 0)
-            #     # Pad data_stamp_month to a size of 30
-            #     if len(data_stamp_month) < desired_length:
-            #         padding = desired_length - len(data_stamp_month)
-            #         data_stamp_month = np.pad(data_stamp_month, ((0, padding), (0, 0)), mode='constant')
-            #     elif len(data_stamp_month) > desired_length:
-            #         data_stamp_month = data_stamp_month[:desired_length]
-
-            #     data_x.append(month_data_x)
-            #     data_y.append(month_data_y)
-            #     data_stamp.append(data_stamp_month)
-
+            (data_x, data_y, data_stamp, masks) = pad_and_mask(
+                data_x, data_y, data_stamp, max_length
+            )
             num_train = int(len(data_x) * 0.7)
             num_test = int(len(data_x) * 0.1)
             num_vali = len(data_x) - num_train - num_test
@@ -871,10 +840,12 @@ class Dataset_Crop(Dataset):
                 np.array(data_y).shape,
                 np.array(data_stamp).shape,
             )
-            data_x, data_y, data_stamp = shuffle(
+            data_x, data_y, data_stamp, masks, seq_end_lengths = shuffle(
                 np.array(data_x),
                 np.array(data_y),
                 np.array(data_stamp),
+                np.array(masks),
+                np.array(seq_end_lengths),
                 random_state=5,
             )
 
@@ -891,7 +862,18 @@ class Dataset_Crop(Dataset):
             train_data_stamp = data_stamp[:num_train]
             test_data_stamp = data_stamp[num_train : num_train + num_test]
             vali_data_stamp = data_stamp[-num_vali:]
-            total_data_stamp = [train_data_stamp, vali_data_stamp, test_data_stamp]
+            total_data_stamp = [
+                train_data_stamp,
+                vali_data_stamp,
+                test_data_stamp,
+            ]
+
+            train_masks = masks[:num_train]
+            test_masks = masks[num_train : num_train + num_test]
+            vali_masks = masks[-num_vali:]
+            total_masks = [train_masks, vali_masks, test_masks]
+
+            test_seq_end_lengths = seq_end_lengths[num_train : num_train + num_test]
 
             targets_count = sorted(targets_count)
             self.class_weights = compute_class_weight(
@@ -900,24 +882,149 @@ class Dataset_Crop(Dataset):
                 y=targets_count,
             )
 
-            self.data_x = np.array(total_data_x[self.split_id])
-            self.data_y = np.array(total_data_y[self.split_id])
-            self.data_stamp = np.array(total_data_stamp[self.split_id])
+            self.data_x = total_data_x[self.split_id]
+            self.data_y = total_data_y[self.split_id]
+            self.data_stamp = total_data_stamp[self.split_id]
+            self.masks = total_masks[self.split_id]
             # save these numpy arrays to a file
-            np.save(os.path.join(folder, "class_weights.npy"), self.class_weights)
+            np.save(
+                os.path.join(folder, "class_weights.npy"), self.class_weights
+            )
             np.save(os.path.join(folder, "data_x.npy"), self.data_x)
             np.save(os.path.join(folder, "data_y.npy"), self.data_y)
             np.save(os.path.join(folder, "data_stamp.npy"), self.data_stamp)
+            np.save(os.path.join(folder, "masks.npy"), self.masks)
+            if self.split_id == 2:
+                np.save(
+                    os.path.join(folder, "seq_end_lengths.npy"),
+                    test_seq_end_lengths,
+                )
 
     def __getitem__(self, index):
         seq_x = self.data_x[index].copy()
         target = self.data_y[index][0].copy()
         seq_x_mark = self.data_stamp[index].copy()
         seq_y_mark = self.data_stamp[index].copy()
-        return seq_x, target, seq_x_mark, seq_y_mark
+        masks = self.masks[index].copy()
+        return seq_x, target, seq_x_mark, seq_y_mark, masks
 
     def __len__(self):
         return len(self.data_x)
 
     def inverse_transform(self, data):
         return self.scaler.inverse_transform(data)
+
+
+def pad_and_mask(
+    sequences, labels, data_stamp, max_length, padding_value=0.0
+):
+
+    sequences_padded = (
+        [
+            pad(
+                torch.tensor(s),
+                (0, 0, 0, max(0, max_length - s.shape[0])),
+                value=padding_value,
+            )
+            for s in sequences
+        ],
+    )
+
+    labels_padded = (
+        [
+            pad(
+                torch.tensor(l),
+                (0, 0, 0, max(0, max_length - l.shape[0])),
+                value=padding_value,
+            )
+            for l in labels
+        ],
+    )
+
+    data_stamp = (
+        [
+            pad(
+                torch.tensor(x),
+                (0, 0, 0, max(0, max_length - x.shape[0])),
+                value=padding_value,
+            )
+            for x in data_stamp
+        ],
+    )
+
+    # print(len(sequences_padded[0]))
+    # print(sequences_padded[0][0].shape)
+    # sequences_padded = torch.tensor(sequences_padded)
+    # labels = torch.tensor(labels_padded)
+    # data_stamp = torch.tensor(data_stamp)
+    masks = []
+    for s in sequences_padded:
+        for t in s:
+            print(t)
+            mask = t != padding_value
+            masks.append(mask)
+            print(mask)
+    # masks = [s != padding_value for s in sequences_padded]
+    # print(masks)
+    print(len(masks))
+    return (sequences_padded[0], labels_padded[0], data_stamp[0], masks)
+
+
+# def pad_and_mask_sequences(sequences, padding_value=0):
+#     # Pad the sequences
+#     sequences_padded = torch.nn.utils.rnn.pad_sequence(sequences, batch_first=True, padding_value=padding_value)
+
+#     # Create masks
+#     masks = (sequences_padded != padding_value).float()
+
+#     return sequences_padded, masks
+# Loop over the groups
+# todo this was for all the classes for loop
+# for (FOI_ID_LEVERANCIER, year, month), group_data in tqdm(groups):
+
+#     # Now, group_data contains the data for one 'FOI_ID_LEVERANCIER' for one month
+#     # skip januari for now since it has 16 days #TODO: fix this
+#     if month == 1:
+#         continue
+#     month_data_x = group_data[cols].values.astype(np.float64)
+#     month_data_y = group_data[self.target].values.astype(np.float64)
+
+#     target_values_flat = month_data_y.argmax(axis=1)
+#     targets_count.append(target_values_flat[0])
+#     if len(month_data_x) < desired_length:
+#         padding = desired_length - len(month_data_x)
+#         month_data_x = np.pad(month_data_x, ((0, padding), (0, 0)), mode='constant')
+#         month_data_y = np.pad(month_data_y, ((0, padding), (0, 0)), mode='constant')
+#     elif len(month_data_x) > desired_length:
+#         month_data_x = month_data_x[:desired_length]
+#         month_data_y = month_data_y[:desired_length]
+
+#     df_stamp_month = group_data[["date"]]
+#     df_stamp_month["date"] = pd.to_datetime(df_stamp_month.date)
+#     if self.timeenc == 0:
+#         df_stamp_month["month"] = df_stamp_month.date.apply(
+#             lambda row: row.month, axis=1
+#         )
+#         df_stamp_month["day"] = df_stamp_month.date.apply(lambda row: row.day, axis=1)
+#         df_stamp_month["weekday"] = df_stamp_month.date.apply(
+#             lambda row: row.weekday(), axis=1
+#         )
+#         df_stamp_month["hour"] = df_stamp_month.date.apply(
+#             lambda row: row.hour, axis=1
+#         )
+#         data_stamp_month = df_stamp_month.drop(["date"], axis=1).values
+#     elif self.timeenc == 1:
+#         data_stamp_month = time_features(
+#             pd.to_datetime(df_stamp_month["date"].values), freq=self.freq
+#         )
+#         data_stamp_month = data_stamp_month.transpose(1, 0)
+#     # Pad data_stamp_month to a size of 30
+#     if len(data_stamp_month) < desired_length:
+#         padding = desired_length - len(data_stamp_month)
+#         data_stamp_month = np.pad(data_stamp_month, ((0, padding), (0, 0)), mode='constant')
+#     elif len(data_stamp_month) > desired_length:
+#         data_stamp_month = data_stamp_month[:desired_length]
+
+#     data_x.append(month_data_x)
+#     data_y.append(month_data_y)
+#     data_stamp.append(data_stamp_month)

@@ -54,10 +54,10 @@ class Model(nn.Module):
             configs.d_model, configs.seq_len, bias=True
         )
         self.classifier = nn.Linear(
-            configs.seq_len * 9, self.num_classes
+            configs.seq_len * 16, self.num_classes
         )
 
-    def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
+    def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec, padding_mask):
         # print("shape of x_enc, x_enc_mask", x_enc.shape, x_mark_enc.shape)
         # x_enc: [B,seq_len,N]; x_enc_mask: [B,seq_len,4]
         if self.use_norm:
@@ -77,13 +77,13 @@ class Model(nn.Module):
 
         # Embedding
         # B L N -> B N E                (B L N -> B L E in the vanilla Transformer)
-        enc_out = self.enc_embedding(
-            x_enc, x_mark_enc
+        enc_out, padding_mask = self.enc_embedding(
+            x_enc, x_mark_enc, padding_mask
         )  # covariates (e.g timestamp) can be also embedded as tokens
         # print("shape of enc_out after enc_embedding", enc_out.shape)
         # B N E -> B N E                (B L E -> B L E in the vanilla Transformer)
         # the dimensions of embedded time series has been inverted, and then processed by native attn, layernorm and ffn modules
-        enc_out, attns = self.encoder(enc_out, attn_mask=None)
+        enc_out, attns = self.encoder(enc_out, attn_mask=padding_mask)
         # print("shape of enc_out after encoder", enc_out.shape)
 
         # B N E -> B N S -> B S N
@@ -107,13 +107,10 @@ class Model(nn.Module):
         return dec_out
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
-        dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
-        # print("dec out shape", dec_out.shape)
-        # print("dec out", dec_out[:, -self.num_classes:, :].shape, dec_out[:, -self.num_classes:, :])
-        # dec_out = self.fc(dec_out)
+
+        dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec, padding_mask=mask)
         dec_out = dec_out.squeeze(-1)
-        # dec_out = F.softmax(dec_out, dim=-1)
-        # print("dec out", dec_out.shape, dec_out)
+
         # return dec_out[:, -self.num_classes:, :]  # [B, L, D]
         return dec_out
 
