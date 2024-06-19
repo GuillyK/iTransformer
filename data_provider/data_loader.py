@@ -11,6 +11,7 @@ from torch.nn.functional import pad
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm import tqdm
+from datetime import datetime
 
 from utils.timefeatures import time_features
 
@@ -690,6 +691,8 @@ class Dataset_Crop(Dataset):
 
         self.root_path = root_path
         self.data_path = data_path
+        self.class_weights = None
+        self.dates = 0
         self.__read_data__()
 
     def __read_data__(self):
@@ -719,8 +722,12 @@ class Dataset_Crop(Dataset):
             self.data_y = np.load(os.path.join(folder, "data_y.npy"))
             self.data_stamp = np.load(os.path.join(folder, "data_stamp.npy"))
             self.masks = np.load(os.path.join(folder, "masks.npy"))
+            self.seq_end_lengths = np.load(
+                os.path.join(folder, "seq_end_lengths.npy")
+            )
+            self.dates = np.load(os.path.join(folder, "dates.npy"), allow_pickle=True)
         else:
-            os.makedirs(folder)
+
 
             df_raw = pd.read_csv(os.path.join(path, self.data_path))
 
@@ -748,7 +755,7 @@ class Dataset_Crop(Dataset):
             df_raw = df_raw[
                 ["date"] + ["FOI_ID_LEVERANCIER"] + cols + self.target
             ]
-            df_raw["date"] = pd.to_datetime(df_raw.date)
+            df_raw["date"] = pd.to_datetime(df_raw.date, format="%Y-%m-%d")
             df_raw["year"] = df_raw.date.dt.year
             df_raw["month"] = df_raw.date.dt.month
             groups = df_raw.groupby(["FOI_ID_LEVERANCIER"])
@@ -758,15 +765,18 @@ class Dataset_Crop(Dataset):
             data_stamp = []
             targets_count = []
             seq_end_lengths = []
-            desired_length = (
-                27 - 8
-            )  # seq_length maybe later #todo: was 30 before
+            min_starting_date = datetime.strptime("2023-03", "%Y-%m")
+            self.dates = sorted(df_raw[df_raw["date"] > min_starting_date]["date"].unique())
+            # print(self.dates)
+            # print(type(self.dates))
+
 
             # for 3 classes
             for (FOI_ID_LEVERANCIER), group_data in tqdm(groups):
 
                 # skip 2 januari entries to make the length 81
-                group_data = group_data[8:]
+                group_data = group_data[group_data["date"] > min_starting_date]
+                # group_data = group_data[8:]
                 month_data_x = group_data[cols].values.astype(np.float64)
                 month_data_y = group_data[self.target].values.astype(
                     np.float64
@@ -779,8 +789,8 @@ class Dataset_Crop(Dataset):
                 seq_end = abs(int(normal.sample()))
                 if seq_end >= len(group_data):
                     seq_end = len(group_data) - 1
-                elif seq_end < 0:
-                    seq_end = 0
+                elif seq_end < 6:
+                    seq_end = 6
                 seq_end_lengths.append(seq_end)
 
                 target_values_flat = month_data_y.argmax(axis=1)
@@ -798,7 +808,7 @@ class Dataset_Crop(Dataset):
                 #     month_data_y = month_data_y[:desired_length]
 
                 df_stamp_month = group_data[["date"]][0:seq_end]
-                df_stamp_month["date"] = pd.to_datetime(df_stamp_month.date)
+                df_stamp_month["date"] = pd.to_datetime(df_stamp_month.date, format="%Y-%m-%d")
                 if self.timeenc == 0:
                     df_stamp_month["month"] = df_stamp_month.date.apply(
                         lambda row: row.month, axis=1
@@ -832,6 +842,7 @@ class Dataset_Crop(Dataset):
             num_train = int(len(data_x) * 0.7)
             num_test = int(len(data_x) * 0.1)
             num_vali = len(data_x) - num_train - num_test
+            print(f"{num_train=}")
 
             # shuffle the data
             print(len(data_x), len(data_y), len(data_stamp))
@@ -850,6 +861,7 @@ class Dataset_Crop(Dataset):
             )
 
             train_data_x = data_x[:num_train]
+            print(f"{len(train_data_x)=}")
             test_data_x = data_x[num_train : num_train + num_test]
             vali_data_x = data_x[-num_vali:]
             total_data_x = [train_data_x, vali_data_x, test_data_x]
@@ -873,7 +885,10 @@ class Dataset_Crop(Dataset):
             vali_masks = masks[-num_vali:]
             total_masks = [train_masks, vali_masks, test_masks]
 
+            train_seq_end_lengths = seq_end_lengths[:num_train]
             test_seq_end_lengths = seq_end_lengths[num_train : num_train + num_test]
+            vali_seq_end_lengths = seq_end_lengths[-num_vali:]
+            total_seq_end_lengths = [train_seq_end_lengths, vali_seq_end_lengths, test_seq_end_lengths]
 
             targets_count = sorted(targets_count)
             self.class_weights = compute_class_weight(
@@ -882,23 +897,32 @@ class Dataset_Crop(Dataset):
                 y=targets_count,
             )
 
-            self.data_x = total_data_x[self.split_id]
-            self.data_y = total_data_y[self.split_id]
-            self.data_stamp = total_data_stamp[self.split_id]
-            self.masks = total_masks[self.split_id]
-            # save these numpy arrays to a file
-            np.save(
-                os.path.join(folder, "class_weights.npy"), self.class_weights
-            )
-            np.save(os.path.join(folder, "data_x.npy"), self.data_x)
-            np.save(os.path.join(folder, "data_y.npy"), self.data_y)
-            np.save(os.path.join(folder, "data_stamp.npy"), self.data_stamp)
-            np.save(os.path.join(folder, "masks.npy"), self.masks)
-            if self.split_id == 2:
+            for flag in ["val", "test", "train"]:
+                self.split_id = self.type_map[flag]
+                type_sort = type_map[self.split_id]
+                path = os.path.join(self.root_path, "noordoostpolder/")
+                folder = os.path.join(path, type_sort)
+                if not os.path.exists(folder):
+                    os.makedirs(folder)
+                self.data_x = total_data_x[self.split_id]
+                print(f"{len(self.data_x)=}")
+                self.data_y = total_data_y[self.split_id]
+                self.data_stamp = total_data_stamp[self.split_id]
+                self.masks = total_masks[self.split_id]
+                self.seq_end_lengths = total_seq_end_lengths[self.split_id]
+                # save these numpy arrays to a file
                 np.save(
-                    os.path.join(folder, "seq_end_lengths.npy"),
-                    test_seq_end_lengths,
+                    os.path.join(folder, "class_weights.npy"), self.class_weights
                 )
+                np.save(os.path.join(folder, "data_x.npy"), self.data_x)
+                np.save(os.path.join(folder, "data_y.npy"), self.data_y)
+                np.save(os.path.join(folder, "data_stamp.npy"), self.data_stamp)
+                np.save(os.path.join(folder, "masks.npy"), self.masks)
+
+                np.save(os.path.join(folder, "seq_end_lengths.npy"),
+                self.seq_end_lengths)
+                np.save(os.path.join(folder, "dates.npy"), self.dates)
+
 
     def __getitem__(self, index):
         seq_x = self.data_x[index].copy()
@@ -906,13 +930,20 @@ class Dataset_Crop(Dataset):
         seq_x_mark = self.data_stamp[index].copy()
         seq_y_mark = self.data_stamp[index].copy()
         masks = self.masks[index].copy()
-        return seq_x, target, seq_x_mark, seq_y_mark, masks
+        seq_end_length = self.seq_end_lengths[index]
+        return seq_x, target, seq_x_mark, seq_y_mark, masks, seq_end_length
 
     def __len__(self):
         return len(self.data_x)
 
     def inverse_transform(self, data):
         return self.scaler.inverse_transform(data)
+
+    def get_dates(self):
+        return self.dates
+
+    def get_class_weights(self):
+        return self.class_weights
 
 
 def pad_and_mask(
@@ -960,13 +991,14 @@ def pad_and_mask(
     masks = []
     for s in sequences_padded:
         for t in s:
-            print(t)
+            # print(t)
             mask = t != padding_value
             masks.append(mask)
-            print(mask)
+
     # masks = [s != padding_value for s in sequences_padded]
     # print(masks)
-    print(len(masks))
+    # print(len(masks))
+
     return (sequences_padded[0], labels_padded[0], data_stamp[0], masks)
 
 

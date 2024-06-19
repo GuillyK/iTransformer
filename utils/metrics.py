@@ -50,7 +50,7 @@ def MSPE(pred, true):
     return np.mean(np.square((pred - true) / true))
 
 
-def metric(pred, true, target_names):
+def metric(pred, true, target_names, dates):
     # mae = MAE(pred, true)
     # mse = MSE(pred, true)
     # rmse = RMSE(pred, true)
@@ -64,6 +64,63 @@ def metric(pred, true, target_names):
     F1, F1_micro = f1(pred, true)
 
     return acc, conf_matrix, prec, prec_micro, rec, rec_micro, F1, F1_micro
+
+
+def accuracy_over_time(preds, trues, seq_end_length_list, dates):
+    acc_dict = {}
+    for lengths in seq_end_length_list:
+
+        for pred, true, length in zip(preds, trues, lengths):
+            # print(f"{pred=}")
+            # print(f"{true=}")
+            # print(f"{length=}")
+            # print(pred.shape, true.shape)
+
+            if np.array_equal(pred, true):
+                correct = 1
+            else:
+                correct = 0
+            if length.item() not in acc_dict:
+                acc_dict[length.item()] = []
+            acc_dict[length.item()].append(correct)
+    for length, correct_list in acc_dict.items():
+        acc_dict[length] = sum(correct_list) / len(correct_list)
+    acc_dict = {k: acc_dict[k] for k in sorted(acc_dict)}
+
+    # 7 day interval
+    # ['2023-01-17', '2023-01-24', '2023-01-31', '2023-02-07',
+    #    '2023-02-14', '2023-02-21', '2023-02-28', '2023-03-07',
+    #    '2023-03-14', '2023-03-21', '2023-03-28', '2023-04-04',
+    #    '2023-04-11', '2023-04-18', '2023-04-25', '2023-05-02',
+    #    '2023-05-09', '2023-05-16', '2023-05-23', '2023-05-30',
+    #    '2023-06-06', '2023-06-13', '2023-06-20', '2023-06-27',
+    #    '2023-07-04', '2023-07-11', '2023-07-18', '2023-07-25',
+    #    '2023-08-01', '2023-08-08', '2023-08-15', '2023-08-22',
+    #    '2023-08-29', '2023-09-05', '2023-09-12', '2023-09-19',
+    #    '2023-09-26', '2023-10-03', '2023-10-10', '2023-10-17',
+    #    '2023-10-24'],
+    figure = plot_accuracy(acc_dict, dates)
+    return acc_dict, figure
+
+
+def plot_accuracy(acc_dict, dates):
+    # Unpack the dictionary into two lists
+    lengths = list(acc_dict.keys())
+    accuracies = list(acc_dict.values())
+    print(lengths, accuracies)
+    # Convert lengths to dates
+    dates = dates[-len(accuracies):]
+
+    # Create the plot
+    figure = plt.figure(figsize=(10, 6))
+    plt.plot(dates, accuracies, marker="o")
+    plt.title("Accuracy over time")
+    plt.xlabel("Date")
+    plt.ylabel("Accuracy")
+    plt.grid(True)
+    plt.xticks(rotation=45)  # Rotate x-axis labels for better visibility
+    plt.tight_layout()  # Adjust layout for better visibility
+    return figure
 
 
 # Metrics for time series classification
@@ -146,5 +203,7 @@ def plot_to_image(figure):
 
     digit = tf.image.decode_png(buf.getvalue(), channels=4)
     digit = tf.expand_dims(digit, 0)
+
+    return digit
 
     return digit

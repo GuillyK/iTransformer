@@ -2,10 +2,11 @@ import torch
 
 
 class TriangularCausalMask():
-    def __init__(self, B, L, device="cpu"):
+    def __init__(self, B, L,  padding_mask, device="cpu"):
         mask_shape = [B, 1, L, L]
         with torch.no_grad():
             self._mask = torch.triu(torch.ones(mask_shape, dtype=torch.bool), diagonal=1).to(device)
+            # self._mask = padding_mask.to(device)
 
     @property
     def mask(self):

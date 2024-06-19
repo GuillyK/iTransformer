@@ -1,4 +1,8 @@
+import cProfile
+import datetime
+import gc
 import os
+import pstats
 import time
 import warnings
 
@@ -16,7 +20,7 @@ from tqdm import tqdm
 
 from data_provider.data_factory import data_provider
 from experiments.exp_basic import Exp_Basic
-from utils.metrics import metric
+from utils.metrics import accuracy_over_time, metric
 from utils.tools import EarlyStopping, adjust_learning_rate, visual
 
 
@@ -26,7 +30,10 @@ warnings.filterwarnings("ignore")
 class Exp_Long_Term_Forecast(Exp_Basic):
     def __init__(self, args):
         super(Exp_Long_Term_Forecast, self).__init__(args)
-        log_file_name = "runs/" + args.model_id + ".log"
+        # if args.is_training:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
+        # + "_" + timestamp
+        log_file_name = "runs/" + args.model_id  + ".log"
         self.writer = SummaryWriter(log_dir=log_file_name)
         # self.writer.add_hparams(vars(self.args), {})
 
@@ -35,6 +42,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         if self.args.use_multi_gpu and self.args.use_gpu:
             model = nn.DataParallel(model, device_ids=self.args.device_ids)
+            print("use multi gpu")
         return model
 
     def _get_data(self, flag):
@@ -64,27 +72,50 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             if m.bias is not None:
                 torch.nn.init.zeros_(m.bias)
 
+    # def _write_graph(self, model, train_loader):
+    #     temp_x, temp_y, temp_x_mark, temp_y_mark, padding_mask = next(iter(train_loader))
+
+    #     # Move the data to the correct device
+    #     temp_x = temp_x.float().to(self.device)
+    #     temp_y = temp_y.float().to(self.device)
+    #     temp_x_mark = temp_x_mark.float().to(self.device)
+    #     temp_y_mark = temp_y_mark.float().to(self.device)
+    #     padding_mask = padding_mask.to(self.device)
+
+    #     # If your model is wrapped in DataParallel, access the original model with .module
+    #     original_model = self.model.module if isinstance(self.model, nn.DataParallel) else self.model
+
+    #     # Add the model graph to TensorBoard
+    #     self.writer.add_graph(original_model, [temp_x, temp_x_mark, temp_y, temp_y_mark, padding_mask])
+    #     if self.args.use_multi_gpu:
+    #         self.model = nn.DataParallel(original_model, device_ids=self.args.device_ids)
+    #         print("use multi gpu after graph writing")
+    #     return self.model
+
     def vali(self, vali_data, vali_loader, criterion):
         total_loss = []
         self.model.eval()
         class_weights = torch.from_numpy(vali_loader.dataset.class_weights)
         # class_weights = class_weights.float().to(self.device)
         criterion = self._select_criterion(class_weights)
+        dates = vali_loader.dataset.get_dates()
 
         with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark, padding_mask) in enumerate(
-                vali_loader
-            ):
+            for i, (
+                batch_x,
+                batch_y,
+                batch_x_mark,
+                batch_y_mark,
+                padding_mask,
+                seq_end_lengths,
+            ) in enumerate(vali_loader):
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
                 class_weights = vali_loader.dataset.class_weights
                 # class_weights = class_weights.float().to(self.device)
-                if "PEMS" in self.args.data or "Solar" in self.args.data:
-                    batch_x_mark = None
-                    batch_y_mark = None
-                else:
-                    batch_x_mark = batch_x_mark.float().to(self.device)
-                    batch_y_mark = batch_y_mark.float().to(self.device)
+
+                batch_x_mark = batch_x_mark.float().to(self.device)
+                batch_y_mark = batch_y_mark.float().to(self.device)
 
                 # decoder input
                 # Decoder turned off for classification, dec_inp=batch_y
@@ -113,11 +144,19 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 else:
                     if self.args.output_attention:
                         outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark, padding_mask
+                            batch_x,
+                            batch_x_mark,
+                            batch_y,
+                            batch_y_mark,
+                            padding_mask,
                         )
                     else:
                         outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark, padding_mask
+                            batch_x,
+                            batch_x_mark,
+                            batch_y,
+                            batch_y_mark,
+                            padding_mask,
                         )
                 f_dim = -1 if self.args.features == "MS" else 0
                 # outputs = outputs[:, -self.args.pred_len :, f_dim:]
@@ -141,6 +180,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         return total_loss
 
     def train(self, setting):
+        # profiler = cProfile.Profile()
+        # profiler.enable()
         train_data, train_loader = self._get_data(flag="train")
         vali_data, vali_loader = self._get_data(flag="val")
         test_data, test_loader = self._get_data(flag="test")
@@ -153,21 +194,29 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         train_steps = len(train_loader)
         early_stopping = EarlyStopping(
-            patience=self.args.patience, verbose=True
+            patience=self.args.patience, verbose=True, delta=-0.05
         )
 
         model_optim = self._select_optimizer()
 
-        class_weights = train_loader.dataset.class_weights
-        # class_weights = class_weights.float().to(self.device)
+        class_weights = train_loader.dataset.get_class_weights()
         criterion = self._select_criterion(class_weights)
         scheduler = lr_scheduler.ExponentialLR(model_optim, gamma=0.9)
-
+        dates = train_loader.dataset.get_dates()
         if self.args.use_amp:
             scaler = torch.cuda.amp.GradScaler()
         preds = []
         trues = []
+        seq_end_lengths_list = []
+        steps = 0
         self.model.apply(self._weights_init)
+
+        # self.model = self._write_graph(self.model, train_loader)
+        num_trainable_params = sum(
+            p.numel() for p in self.model.parameters() if p.requires_grad
+        )
+
+        print(f"Number of trainable parameters: {num_trainable_params}")
         for epoch in range(self.args.train_epochs):
             iter_count = 0
             train_loss = []
@@ -175,35 +224,29 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             self.model.train()
             epoch_time = time.time()
 
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark, padding_mask) in enumerate(
-                train_loader
-            ):
+            for i, (
+                batch_x,
+                batch_y,
+                batch_x_mark,
+                batch_y_mark,
+                padding_mask,
+                seq_end_lengths,
+            ) in enumerate(train_loader):
 
-                class_weights = train_loader.dataset.class_weights
                 # for j in sequences:
                 iter_count += 1
+                steps += 1
                 model_optim.zero_grad()
                 batch_x = batch_x.float().to(self.device)
 
                 batch_y = batch_y.float().to(self.device)
+                padding_mask = padding_mask.to("cpu")
                 if "PEMS" in self.args.data or "Solar" in self.args.data:
                     batch_x_mark = None
                     batch_y_mark = None
                 else:
                     batch_x_mark = batch_x_mark.float().to(self.device)
                     batch_y_mark = batch_y_mark.float().to(self.device)
-
-                # decoder input
-                # batch_y = torch.zeros_like(
-                #     batch_y[:, -self.args.pred_len :, :]
-                # ).float()
-                # batch_y = (
-                #     torch.cat(
-                #         [batch_y[:, : self.args.label_len, :], batch_y], dim=1
-                #     )
-                #     .float()
-                #     .to(self.device)
-                # )
 
                 # encoder - decoder
                 if self.args.use_amp:
@@ -226,27 +269,51 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         loss = criterion(outputs, batch_y)
                         train_loss.append(loss.item())
                 else:
+
                     if self.args.output_attention:
                         outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark, padding_mask
+                            batch_x,
+                            batch_x_mark,
+                            batch_y,
+                            batch_y_mark,
+                            padding_mask,
                         )
-                        self.writer.add_graph(
-                            self.model,
-                            [batch_x, batch_x_mark, batch_y, batch_y_mark,padding_mask],
-                        )
+                        # self.writer.add_graph(
+                        #     self.model,
+                        #     [
+                        #         batch_x,
+                        #         batch_x_mark,
+                        #         batch_y,
+                        #         batch_y_mark,
+                        #         padding_mask,
+                        #     ],
+                        # )
                     else:
                         outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark, padding_mask
+                            batch_x,
+                            batch_x_mark,
+                            batch_y,
+                            batch_y_mark,
+                            padding_mask,
                         )
-                        self.writer.add_graph(
-                            self.model,
-                            [batch_x, batch_x_mark, batch_y, batch_y_mark,padding_mask],
-                        )
+                        # self.writer.add_graph(
+                        #     self.model,
+                        #     [
+                        #         batch_x,
+                        #         batch_x_mark,
+                        #         batch_y,
+                        #         batch_y_mark,
+                        #         padding_mask,
+                        #     ],
+                        # )
 
                     f_dim = -1 if self.args.features == "MS" else 0
                     outputs = outputs.float()
                     loss = criterion(outputs, batch_y)
                     train_loss.append(loss.item())
+
+                    # log the loass per step to tensorboard
+                    self.writer.add_scalar("Loss/train_steps", loss, steps)
 
                     probabilities = F.softmax(outputs, dim=1)
                     probabilities = probabilities.detach().cpu().numpy()
@@ -257,6 +324,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     true = batch_y.detach().cpu().numpy()
                     preds.append(one_hot_prob)
                     trues.append(true[0])
+                    seq_end_lengths_list.append(seq_end_lengths)
                     # Detach and move to CPU
 
                 if (i + 1) % 100 == 0:
@@ -266,11 +334,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         )
                     )
                     speed = (time.time() - time_now) / iter_count
-                    left_time = speed * (
-                        (self.args.train_epochs - epoch) * train_steps - i
+                    left_time = (
+                        speed
+                        * ((self.args.train_epochs - epoch) * train_steps - i)
+                        / 3600
                     )
                     print(
-                        "\tspeed: {:.4f}s/iter; left time: {:.4f}s".format(
+                        "\tspeed: {:.4f}s/iter; left time: {:.4f}h".format(
                             speed, left_time
                         )
                     )
@@ -278,12 +348,23 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     plt.bar(range(len(probabilities[0])), probabilities[0])
                     plt.xlabel("Classes")
                     plt.ylabel("Frequency")
+                    plt.text(
+                        0.1,
+                        0.9,
+                        f"True Label: {true[0]}",
+                        transform=plt.gca().transAxes,
+                    )
                     self.writer.add_figure(
-                        "Probability Distribution", fig, global_step=i
+                        "Probability Distribution", fig, global_step=steps
                     )
                     plt.close(fig)
                     iter_count = 0
                     time_now = time.time()
+                    # profiler.disable()
+                    # stats = pstats.Stats(profiler).sort_stats("cumtime")
+                    # stats.strip_dirs()
+                    # stats.print_stats()
+                    # stats.dump_stats("./test_results/test.prof")
 
                 if self.args.use_amp:
                     scaler.scale(loss).backward()
@@ -294,6 +375,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     model_optim.step()
                 self.writer.add_scalar("Loss/train", loss, epoch)
                 for name, param in self.model.named_parameters():
+                    # print(name, param)
+                    # print(i)
                     self.writer.add_histogram(
                         "Weights/" + name, param.data, epoch
                     )
@@ -313,6 +396,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             )  # in GB
             print("Memory Usage: {:.2f} GB".format(memory_usage))
             train_loss = np.average(train_loss)
+
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)
 
@@ -322,6 +406,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             self.writer.add_scalar(
                 "Learning Rate", model_optim.param_groups[0]["lr"], epoch
             )
+            acc_time, acc_time_figure = accuracy_over_time(
+                preds, trues, seq_end_lengths_list, dates
+            )
+
+            self.writer.add_figure(
+                "Accuracy over time", acc_time_figure, epoch
+            )
+            plt.close(acc_time_figure)
             target_names = train_data.target
             (
                 acc,
@@ -332,7 +424,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 rec_micro,
                 F1,
                 F1_micro,
-            ) = metric(preds, trues, target_names)
+            ) = metric(preds, trues, target_names, dates)
 
             print(
                 "acc:{}, prec:{}, prec_micro:{}, recall:{}, recall_micro{}, F1:{}, F1_micro{}".format(
@@ -363,7 +455,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             scheduler.step()
 
             # get_cka(self.args, setting, self.model, train_loader, self.device, epoch)
-
+        # torch.cuda.empty_cache()
+        # gc.collect()
         best_model_path = path + "/" + "checkpoint.pth"
         self.model.load_state_dict(torch.load(best_model_path))
 
@@ -380,18 +473,26 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             )
         preds = []
         trues = []
-        accuracy_over_time = []
-
-        seq_end_lengths = np.load("/home/guilly/iTransformer/dataset/noordoostpolder/test/seq_end_lengths.npy")
+        # accuracy_over_time = []
+        seq_end_lengths_list = []
+        dates = test_loader.dataset.get_dates()
+        # seq_end_lengths = np.load(
+        #     "/home/guilly/iTransformer/dataset/noordoostpolder/test/seq_end_lengths.npy"
+        # )
         folder_path = "./test_results/" + setting + "/"
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
 
         self.model.eval()
         with torch.no_grad():
-            for i, (batch_x, batch_y, batch_x_mark, batch_y_mark, padding_mask) in enumerate(
-                tqdm(test_loader)
-            ):
+            for i, (
+                batch_x,
+                batch_y,
+                batch_x_mark,
+                batch_y_mark,
+                padding_mask,
+                seq_end_lengths,
+            ) in enumerate(tqdm(test_loader)):
 
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
@@ -428,12 +529,20 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 else:
                     if self.args.output_attention:
                         outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark, padding_mask
+                            batch_x,
+                            batch_x_mark,
+                            batch_y,
+                            batch_y_mark,
+                            padding_mask,
                         )
 
                     else:
                         outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark, padding_mask
+                            batch_x,
+                            batch_x_mark,
+                            batch_y,
+                            batch_y_mark,
+                            padding_mask,
                         )
 
                 f_dim = -1 if self.args.features == "MS" else 0
@@ -476,21 +585,22 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     gt = true
                     pd = predictions
                     visual(gt, pd, os.path.join(folder_path, str(i) + ".pdf"))
-                    self.writer.add_histogram(
-                        "Probability Distribution",
-                        probabilities[0],
-                        global_step=i,
-                    )
+                    # self.writer.add_histogram(
+                    #     "Probability Distribution",
+                    #     probabilities[0],
+                    #     global_step=i,
+                    # )
                 one_hot_prob = np.eye(len(probabilities[0]))[
                     np.argmax(probabilities[0])
                 ]
 
                 preds.append(one_hot_prob)
                 trues.append(true[0])
-                a
+                seq_end_lengths_list.append(seq_end_lengths)
 
         preds = np.array(preds)  # [Batch, no_classes]
         trues = np.array(trues)
+
         print("test shape:", preds.shape, trues.shape)
         # preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
         # trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
@@ -501,8 +611,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
         target_names = test_data.target
+
+        acc_time, acc_figure = accuracy_over_time(
+            preds, trues, seq_end_lengths_list, dates
+        )
+        print(acc_time)
+        acc_figure.savefig(folder_path + "accuracy_over_time.png")
         acc, conf_matrix, prec, prec_micro, rec, rec_micro, F1, F1_micro = (
-            metric(preds, trues, target_names)
+            metric(preds, trues, target_names, dates)
         )
 
         print(

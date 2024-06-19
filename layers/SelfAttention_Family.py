@@ -201,18 +201,46 @@ class FullAttention(nn.Module):
 
         if self.mask_flag:
             if padding_mask is not None:
+                # print(f"{padding_mask.shape=}")
+                # Reduce along the `Features` dimension.
+                padding_mask_reduced = torch.any(padding_mask != 0, dim=1)
+
+                # Add an extra dimension to transform the shape to [B, 1, L].
+                padding_mask_expanded = padding_mask_reduced.unsqueeze(1)
+
+                # Expand the tensor to the shape [B, 1, L, L].
+                padding_mask_final = padding_mask_expanded.unsqueeze(-1).expand(-1, -1, -1, padding_mask_reduced.size(-1))
+
+                # print(padding_mask_final.shape)
+                # exit()
+                padding_mask_final = padding_mask_final
                 attn_mask = (
-                    TriangularCausalMask(B, L, device=queries.device)
-                    | padding_mask
+                    TriangularCausalMask(B, L, device=queries.device, padding_mask=padding_mask_final)
                 )
+                # (self, B, H, L, index, scores, device="cpu"):
+                # attn_mask = ProbMask(B, H, L, index=padding_mask_final ,scores=scores, device=queries.device)
             else:
                 attn_mask = TriangularCausalMask(B, L, device=queries.device)
-
+            # print(TriangularCausalMask(B, L, device=queries.device))
+            # print(TriangularCausalMask(B, L, device=queries.device).mask.shape, padding_mask.shape)
+            # exit()
+            # print(f"{attn_mask.mask=}")
+            # print(attn_mask.mask.shape)
+            # print(f"{scores.shape=}")
             scores.masked_fill_(attn_mask.mask, -np.inf)
-
+            nan_mask = torch.isnan(scores)
+            scores[nan_mask] = 1e-6
+            # scores_mask = torch.isinf(scores)
+            # all_scores_inf = torch.all(scores_mask)
+            # print(all_scores_inf)
+        # print(scale*scores)
+        # print(torch.any(torch.isnan(torch.softmax(scale * scores, dim=-1))))
         A = self.dropout(torch.softmax(scale * scores, dim=-1))
         V = torch.einsum("bhls,bshd->blhd", A, values)
-
+        # print(torch.any(torch.isnan(A)))
+        # print(f"{scores=}")
+        # # print(f"{A=}")
+        # print(f"{V.contiguous()=}")
         if self.output_attention:
             return (V.contiguous(), A)
         else:

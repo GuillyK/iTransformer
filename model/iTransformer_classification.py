@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from layers.Embed import DataEmbedding_inverted
 from layers.SelfAttention_Family import AttentionLayer, FullAttention
 from layers.Transformer_EncDec import Encoder, EncoderLayer
+import time
 
 
 class Model(nn.Module):
@@ -20,7 +21,7 @@ class Model(nn.Module):
         self.use_norm = configs.use_norm
         # Embedding
         self.enc_embedding = DataEmbedding_inverted(
-            configs.seq_len,
+            self.seq_len,
             configs.d_model,
             configs.embed,
             configs.freq,
@@ -33,7 +34,7 @@ class Model(nn.Module):
                 EncoderLayer(
                     AttentionLayer(
                         FullAttention(
-                            False,
+                            True,
                             configs.factor,
                             attention_dropout=configs.dropout,
                             output_attention=configs.output_attention,
@@ -69,7 +70,8 @@ class Model(nn.Module):
             )
             x_enc /= stdev
 
-        _, _, N = x_enc.shape  # B L N
+        _, L, N = x_enc.shape  # B L N
+        self.seq_len = L
         # print("N",N)
         # B: batch_size;    E: d_model;
         # L: seq_len;       S: pred_len;
@@ -77,16 +79,19 @@ class Model(nn.Module):
 
         # Embedding
         # B L N -> B N E                (B L N -> B L E in the vanilla Transformer)
+
         enc_out, padding_mask = self.enc_embedding(
             x_enc, x_mark_enc, padding_mask
         )  # covariates (e.g timestamp) can be also embedded as tokens
         # print("shape of enc_out after enc_embedding", enc_out.shape)
         # B N E -> B N E                (B L E -> B L E in the vanilla Transformer)
         # the dimensions of embedded time series has been inverted, and then processed by native attn, layernorm and ffn modules
+
         enc_out, attns = self.encoder(enc_out, attn_mask=padding_mask)
         # print("shape of enc_out after encoder", enc_out.shape)
 
         # B N E -> B N S -> B S N
+
         dec_out = self.projector(enc_out).permute(0, 2, 1)[
             :, :, :N
         ]  # filter the covariates
@@ -113,6 +118,15 @@ class Model(nn.Module):
 
         # return dec_out[:, -self.num_classes:, :]  # [B, L, D]
         return dec_out
+
+    # def reset(self, new_seq_len):
+    #     self.enc_embedding = DataEmbedding_inverted(
+    #         new_seq_len,
+    #         configs.d_model,
+    #         configs.embed,
+    #         configs.freq,
+    #         configs.dropout,
+    #     )
 
     # def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
     #     if self.use_norm:

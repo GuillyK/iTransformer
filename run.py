@@ -1,4 +1,6 @@
 import argparse
+import cProfile
+import pstats
 import random
 
 import numpy as np
@@ -289,7 +291,7 @@ if __name__ == "__main__":
     else:  # MTSF: multivariate time series forecasting
         Exp = Exp_Long_Term_Forecast
         # Exp = Exp_Long_Term_Forecast_Elects
-
+    
     if args.is_training:
         for ii in range(args.itr):
             # setting record of experiments
@@ -322,6 +324,7 @@ if __name__ == "__main__":
             )
             exp.train(setting)
 
+            # Print the stats report
             print(
                 ">>>>>>>testing : {}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<".format(
                     setting
