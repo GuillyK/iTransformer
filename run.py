@@ -261,6 +261,17 @@ if __name__ == "__main__":
         "--use_norm", type=int, default=True, help="use norm and denorm"
     )
     parser.add_argument(
+        "--var_seq_len",
+        action="store_true",
+        help="use variable sequence length or whole year",
+    )
+    parser.add_argument(
+        "--early_classification",
+        type=int,
+        default=12,
+        help="early classification based on ending month",
+    )
+    parser.add_argument(
         "--partial_start_index",
         type=int,
         default=0,
@@ -291,7 +302,7 @@ if __name__ == "__main__":
     else:  # MTSF: multivariate time series forecasting
         Exp = Exp_Long_Term_Forecast
         # Exp = Exp_Long_Term_Forecast_Elects
-    
+
     if args.is_training:
         for ii in range(args.itr):
             # setting record of experiments

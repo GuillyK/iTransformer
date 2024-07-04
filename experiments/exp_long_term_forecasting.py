@@ -20,7 +20,8 @@ from tqdm import tqdm
 
 from data_provider.data_factory import data_provider
 from experiments.exp_basic import Exp_Basic
-from utils.metrics import accuracy_over_time, metric
+from utils.metrics import accuracy_over_time, metric, visualize_attention
+from utils.tensorboard_monitors import WeightChangeMonitor
 from utils.tools import EarlyStopping, adjust_learning_rate, visual
 
 
@@ -33,7 +34,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         # if args.is_training:
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M")
         # + "_" + timestamp
-        log_file_name = "runs/" + args.model_id  + ".log"
+        if args.is_training:
+            log_file_name = "runs/" + args.model_id + ".log"
+        else:
+            log_file_name = "runs/test/" + args.model_id + ".log"
         self.writer = SummaryWriter(log_dir=log_file_name)
         # self.writer.add_hparams(vars(self.args), {})
 
@@ -143,7 +147,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                             )
                 else:
                     if self.args.output_attention:
-                        outputs = self.model(
+                        outputs, attns = self.model(
                             batch_x,
                             batch_x_mark,
                             batch_y,
@@ -194,7 +198,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         train_steps = len(train_loader)
         early_stopping = EarlyStopping(
-            patience=self.args.patience, verbose=True, delta=-0.05
+            patience=self.args.patience, verbose=True, delta=0.0001
         )
 
         model_optim = self._select_optimizer()
@@ -210,13 +214,22 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         seq_end_lengths_list = []
         steps = 0
         self.model.apply(self._weights_init)
-
+        # if "All_Classes" in setting:
+        #     self.model.reset(48)
+        #     print("loading model")
+        #     print(f"{setting=}")
+        #     self.model.load_state_dict(
+        #         torch.load(
+        #             os.path.join("./checkpoints/" + setting, "checkpoint.pth")
+        #         )
+        #     )
         # self.model = self._write_graph(self.model, train_loader)
         num_trainable_params = sum(
             p.numel() for p in self.model.parameters() if p.requires_grad
         )
 
         print(f"Number of trainable parameters: {num_trainable_params}")
+
         for epoch in range(self.args.train_epochs):
             iter_count = 0
             train_loss = []
@@ -232,6 +245,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 padding_mask,
                 seq_end_lengths,
             ) in enumerate(train_loader):
+                if steps == 0:
+                    new_seq_len = batch_x.size(1)
+                    print(f"{new_seq_len=}")
+                    self.model.reset(new_seq_len)
 
                 # for j in sequences:
                 iter_count += 1
@@ -271,7 +288,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 else:
 
                     if self.args.output_attention:
-                        outputs = self.model(
+                        outputs, attns = self.model(
                             batch_x,
                             batch_x_mark,
                             batch_y,
@@ -344,6 +361,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                             speed, left_time
                         )
                     )
+                    if self.args.output_attention:
+                        visualize_attention(
+                            attention_weights=attns,
+                            input_tokens=len(batch_x[0]),
+                            writer=self.writer,
+                            global_step=steps,
+                        )
                     fig = plt.figure(figsize=(4, 4))
                     plt.bar(range(len(probabilities[0])), probabilities[0])
                     plt.xlabel("Classes")
@@ -374,15 +398,29 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     loss.backward()
                     model_optim.step()
                 self.writer.add_scalar("Loss/train", loss, epoch)
-                for name, param in self.model.named_parameters():
-                    # print(name, param)
-                    # print(i)
+                if epoch == 0:
+                    weight_monitor = WeightChangeMonitor(self.model, top_k=5)
+                layers_to_monitor = weight_monitor.get_layers_to_monitor(
+                    self.model, weight_monitor
+                )
+                for name in layers_to_monitor:
+                    param = dict(self.model.named_parameters())[name]
                     self.writer.add_histogram(
-                        "Weights/" + name, param.data, epoch
+                        f"Weights/{name}", param.data, epoch
                     )
-                    self.writer.add_histogram(
-                        "Gradients/" + name, param.grad, epoch
-                    )
+                    if param.grad is not None:
+                        self.writer.add_histogram(
+                            f"gradients/{name}", param.grad, epoch
+                        )
+                # for name, param in self.model.named_parameters():
+                #     # print(name, param)
+                #     # print(i)
+                #     self.writer.add_histogram(
+                #         "Weights/" + name, param.data, epoch
+                #     )
+                #     self.writer.add_histogram(
+                #         "Gradients/" + name, param.grad, epoch
+                #     )
 
             print(
                 "Epoch: {} cost time: {}".format(
@@ -424,6 +462,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 rec_micro,
                 F1,
                 F1_micro,
+                metrics_df_per_class,
             ) = metric(preds, trues, target_names, dates)
 
             print(
@@ -466,6 +505,10 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         test_data, test_loader = self._get_data(flag="test")
         if test:
             print("loading model")
+            batch_x, _, _, _, _, _ = next(iter(test_loader))
+            new_seq_len = batch_x.size(1)
+            print(f"{new_seq_len=}")
+            self.model.reset(new_seq_len)
             self.model.load_state_dict(
                 torch.load(
                     os.path.join("./checkpoints/" + setting, "checkpoint.pth")
@@ -528,7 +571,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                             )
                 else:
                     if self.args.output_attention:
-                        outputs = self.model(
+                        outputs, attns = self.model(
                             batch_x,
                             batch_x_mark,
                             batch_y,
@@ -612,12 +655,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             os.makedirs(folder_path)
         target_names = test_data.target
 
-        acc_time, acc_figure = accuracy_over_time(
+        acc_time, acc_time_figure = accuracy_over_time(
             preds, trues, seq_end_lengths_list, dates
         )
-        print(acc_time)
-        acc_figure.savefig(folder_path + "accuracy_over_time.png")
-        acc, conf_matrix, prec, prec_micro, rec, rec_micro, F1, F1_micro = (
+
+        self.writer.add_figure("test/Accuracy over time", acc_time_figure)
+        plt.close(acc_time_figure)
+        acc, conf_matrix, prec, prec_micro, rec, rec_micro, F1, F1_micro, metrics_df_per_class = (
             metric(preds, trues, target_names, dates)
         )
 
@@ -626,6 +670,14 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 acc, prec, prec_micro, rec, rec_micro, F1, F1_micro
             )
         )
+        self.writer.add_scalar("test/Accuracy", acc)
+        self.writer.add_scalar("test/Precision", prec)
+        self.writer.add_scalar("test/Precision_micro", prec_micro)
+        self.writer.add_scalar("test/Recall", rec)
+        self.writer.add_scalar("test/Recall_micro", rec_micro)
+        self.writer.add_scalar("test/F1", F1)
+        self.writer.add_scalar("test/F1_micro", F1_micro)
+        self.writer.add_figure("test/Confusion Matrix", conf_matrix)
 
         f = open("result_long_term_forecast.txt", "a")
         f.write(setting + "  \n")
@@ -634,6 +686,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         f.write("\n")
         f.close()
 
+        metrics_df_per_class_html = metrics_df_per_class.to_html()
+        self.writer.add_text("test/Metrics per class", metrics_df_per_class_html)
+        metrics_df_per_class.to_csv(folder_path + "metrics_per_class.csv")
         np.save(folder_path + "metrics.npy", np.array([acc, prec, rec, F1]))
         np.save(folder_path + "confusion_matrix.npy", conf_matrix)
         np.save(folder_path + "pred.npy", preds)

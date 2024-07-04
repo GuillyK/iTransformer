@@ -666,6 +666,8 @@ class Dataset_Crop(Dataset):
         scale=True,
         timeenc=0,
         freq="d",
+        var_seq_len=False,
+        early_classification=False,
     ):
         # size [seq_len, label_len, pred_len]
         # info
@@ -688,6 +690,9 @@ class Dataset_Crop(Dataset):
         self.scale = scale
         self.timeenc = timeenc
         self.freq = freq
+        self.var_seq_len = var_seq_len
+        self.early_classification = early_classification
+        self.columns = None
 
         self.root_path = root_path
         self.data_path = data_path
@@ -706,28 +711,27 @@ class Dataset_Crop(Dataset):
         type_map = ["train", "val", "test"]
         type_sort = type_map[self.split_id]
         dataset_files = ["data_x.npy", "data_y.npy", "data_stamp.npy"]
-        path = os.path.join(self.root_path, "noordoostpolder/")
+        path = os.path.join(self.root_path, "Netherlands/")
         folder = os.path.join(path, type_sort)
         # check if in path train/test/val folder exists if not create
         if False:
             pass
-        if os.path.exists(folder):
-            df_raw = pd.read_csv(os.path.join(path, self.data_path))
-            target = df_raw.columns.str.startswith("class_name_late")
-            self.target = list(df_raw.columns[target])
-            self.class_weights = np.load(
-                os.path.join(folder, "class_weights.npy")
-            )
-            self.data_x = np.load(os.path.join(folder, "data_x.npy"))
-            self.data_y = np.load(os.path.join(folder, "data_y.npy"))
-            self.data_stamp = np.load(os.path.join(folder, "data_stamp.npy"))
-            self.masks = np.load(os.path.join(folder, "masks.npy"))
-            self.seq_end_lengths = np.load(
-                os.path.join(folder, "seq_end_lengths.npy")
-            )
-            self.dates = np.load(os.path.join(folder, "dates.npy"), allow_pickle=True)
+        # if os.path.exists(folder):
+        #     df_raw = pd.read_csv(os.path.join(path, self.data_path))
+        #     target = df_raw.columns.str.startswith("class_name_late")
+        #     self.target = list(df_raw.columns[target])
+        #     self.class_weights = np.load(
+        #         os.path.join(folder, "class_weights.npy")
+        #     )
+        #     self.data_x = np.load(os.path.join(folder, "data_x.npy"))
+        #     self.data_y = np.load(os.path.join(folder, "data_y.npy"))
+        #     self.data_stamp = np.load(os.path.join(folder, "data_stamp.npy"))
+        #     self.masks = np.load(os.path.join(folder, "masks.npy"))
+        #     self.seq_end_lengths = np.load(
+        #         os.path.join(folder, "seq_end_lengths.npy")
+        #     )
+        #     self.dates = np.load(os.path.join(folder, "dates.npy"), allow_pickle=True)
         else:
-
 
             df_raw = pd.read_csv(os.path.join(path, self.data_path))
 
@@ -765,11 +769,16 @@ class Dataset_Crop(Dataset):
             data_stamp = []
             targets_count = []
             seq_end_lengths = []
+            # if self.early_classification != 12:
+            #     print("early classification on")
+            #     min_starting_date = datetime.strptime("2023-01", "%Y-%m")
+            # else:
             min_starting_date = datetime.strptime("2023-03", "%Y-%m")
-            self.dates = sorted(df_raw[df_raw["date"] > min_starting_date]["date"].unique())
+            self.dates = sorted(
+                df_raw[df_raw["date"] > min_starting_date]["date"].unique()
+            )
             # print(self.dates)
             # print(type(self.dates))
-
 
             # for 3 classes
             for (FOI_ID_LEVERANCIER), group_data in tqdm(groups):
@@ -781,17 +790,33 @@ class Dataset_Crop(Dataset):
                 month_data_y = group_data[self.target].values.astype(
                     np.float64
                 )
-
-                # create distribution of available timestamps, with mean at middle of the year
-                normal = torch.distributions.Normal(
-                    len(group_data) / 2, len(group_data) / 4
-                )
-                seq_end = abs(int(normal.sample()))
-                if seq_end >= len(group_data):
+                if self.var_seq_len is True:
+                    # create distribution of available timestamps, with mean at middle of the year
+                    normal = torch.distributions.Normal(
+                        len(group_data) / 2, len(group_data) / 4
+                    )
+                    seq_end = abs(int(normal.sample()))
+                    if seq_end >= len(group_data):
+                        seq_end = len(group_data) - 1
+                    elif seq_end < 6:
+                        seq_end = 6
+                    seq_end_lengths.append(seq_end)
+                else:
                     seq_end = len(group_data) - 1
-                elif seq_end < 6:
-                    seq_end = 6
-                seq_end_lengths.append(seq_end)
+                    seq_end_lengths.append(seq_end)
+
+                if self.early_classification != 12:
+                    # print("early classification on")
+                    month = self.early_classification
+                    date_string = "2023-{}".format(month)
+                    end_date = datetime.strptime(date_string, "%Y-%m")
+                    # Convert self.dates to a numpy array and ensure it's in datetime format
+                    dates_array = np.array(self.dates, dtype="datetime64")
+
+                    # Find the index of the last entry less than or equal to end_date
+                    seq_end = np.searchsorted(
+                        dates_array, end_date, side="right"
+                    )
 
                 target_values_flat = month_data_y.argmax(axis=1)
                 targets_count.append(target_values_flat[0])
@@ -808,7 +833,9 @@ class Dataset_Crop(Dataset):
                 #     month_data_y = month_data_y[:desired_length]
 
                 df_stamp_month = group_data[["date"]][0:seq_end]
-                df_stamp_month["date"] = pd.to_datetime(df_stamp_month.date, format="%Y-%m-%d")
+                df_stamp_month["date"] = pd.to_datetime(
+                    df_stamp_month.date, format="%Y-%m-%d"
+                )
                 if self.timeenc == 0:
                     df_stamp_month["month"] = df_stamp_month.date.apply(
                         lambda row: row.month, axis=1
@@ -886,9 +913,15 @@ class Dataset_Crop(Dataset):
             total_masks = [train_masks, vali_masks, test_masks]
 
             train_seq_end_lengths = seq_end_lengths[:num_train]
-            test_seq_end_lengths = seq_end_lengths[num_train : num_train + num_test]
+            test_seq_end_lengths = seq_end_lengths[
+                num_train : num_train + num_test
+            ]
             vali_seq_end_lengths = seq_end_lengths[-num_vali:]
-            total_seq_end_lengths = [train_seq_end_lengths, vali_seq_end_lengths, test_seq_end_lengths]
+            total_seq_end_lengths = [
+                train_seq_end_lengths,
+                vali_seq_end_lengths,
+                test_seq_end_lengths,
+            ]
 
             targets_count = sorted(targets_count)
             self.class_weights = compute_class_weight(
@@ -896,11 +929,16 @@ class Dataset_Crop(Dataset):
                 classes=np.unique(targets_count),
                 y=targets_count,
             )
-
-            for flag in ["val", "test", "train"]:
+            if self.flag == "train":
+                l = ["val", "test", "train"]
+            elif self.flag == "val":
+                l = ["train", "test", "val"]
+            elif self.flag == "test":
+                l = ["train", "val", "test"]
+            for flag in l:
                 self.split_id = self.type_map[flag]
                 type_sort = type_map[self.split_id]
-                path = os.path.join(self.root_path, "noordoostpolder/")
+                path = os.path.join(self.root_path, "Netherlands/")
                 folder = os.path.join(path, type_sort)
                 if not os.path.exists(folder):
                     os.makedirs(folder)
@@ -910,19 +948,25 @@ class Dataset_Crop(Dataset):
                 self.data_stamp = total_data_stamp[self.split_id]
                 self.masks = total_masks[self.split_id]
                 self.seq_end_lengths = total_seq_end_lengths[self.split_id]
+                self.columns = cols
+                np.save(os.path.join(folder, "columns.npy"), self.columns)
                 # save these numpy arrays to a file
                 np.save(
-                    os.path.join(folder, "class_weights.npy"), self.class_weights
+                    os.path.join(folder, "class_weights.npy"),
+                    self.class_weights,
                 )
                 np.save(os.path.join(folder, "data_x.npy"), self.data_x)
                 np.save(os.path.join(folder, "data_y.npy"), self.data_y)
-                np.save(os.path.join(folder, "data_stamp.npy"), self.data_stamp)
+                np.save(
+                    os.path.join(folder, "data_stamp.npy"), self.data_stamp
+                )
                 np.save(os.path.join(folder, "masks.npy"), self.masks)
 
-                np.save(os.path.join(folder, "seq_end_lengths.npy"),
-                self.seq_end_lengths)
+                np.save(
+                    os.path.join(folder, "seq_end_lengths.npy"),
+                    self.seq_end_lengths,
+                )
                 np.save(os.path.join(folder, "dates.npy"), self.dates)
-
 
     def __getitem__(self, index):
         seq_x = self.data_x[index].copy()
@@ -931,6 +975,7 @@ class Dataset_Crop(Dataset):
         seq_y_mark = self.data_stamp[index].copy()
         masks = self.masks[index].copy()
         seq_end_length = self.seq_end_lengths[index]
+        # columns = self.columns
         return seq_x, target, seq_x_mark, seq_y_mark, masks, seq_end_length
 
     def __len__(self):
@@ -946,9 +991,7 @@ class Dataset_Crop(Dataset):
         return self.class_weights
 
 
-def pad_and_mask(
-    sequences, labels, data_stamp, max_length, padding_value=0.0
-):
+def pad_and_mask(sequences, labels, data_stamp, max_length, padding_value=0.0):
 
     sequences_padded = (
         [

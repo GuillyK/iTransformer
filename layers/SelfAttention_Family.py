@@ -239,7 +239,8 @@ class FullAttention(nn.Module):
         V = torch.einsum("bhls,bshd->blhd", A, values)
         # print(torch.any(torch.isnan(A)))
         # print(f"{scores=}")
-        # # print(f"{A=}")
+        # print(f"{A=}")
+        # print(f"{A.shape=}")
         # print(f"{V.contiguous()=}")
         if self.output_attention:
             return (V.contiguous(), A)

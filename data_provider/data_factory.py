@@ -34,8 +34,8 @@ def data_provider(args, flag):
         drop_last = True
         batch_size = args.batch_size  # bsz for train and valid
         freq = args.freq
-
-    data_set = Data(
+    print(f"{args.var_seq_len=}")
+    data_set = Dataset_Crop(
         root_path=args.root_path,
         data_path=args.data_path,
         flag=flag,
@@ -44,6 +44,8 @@ def data_provider(args, flag):
         target=args.target,
         timeenc=timeenc,
         freq=freq,
+        var_seq_len=args.var_seq_len,
+        early_classification=args.early_classification,
     )
     print(flag, len(data_set))
     data_loader = DataLoader(

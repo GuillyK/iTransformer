@@ -15,10 +15,16 @@ class Model(nn.Module):
 
     def __init__(self, configs):
         super(Model, self).__init__()
+        self.configs = configs
         self.seq_len = configs.seq_len
         self.num_classes = configs.num_classes
         self.output_attention = configs.output_attention
         self.use_norm = configs.use_norm
+        if torch.cuda.is_available():
+            self.device = torch.device(f'cuda:{configs.devices}')
+        else:
+            self.device = torch.device('cpu')
+
         # Embedding
         self.enc_embedding = DataEmbedding_inverted(
             self.seq_len,
@@ -34,7 +40,7 @@ class Model(nn.Module):
                 EncoderLayer(
                     AttentionLayer(
                         FullAttention(
-                            True,
+                            False,
                             configs.factor,
                             attention_dropout=configs.dropout,
                             output_attention=configs.output_attention,
@@ -52,23 +58,38 @@ class Model(nn.Module):
             norm_layer=torch.nn.LayerNorm(configs.d_model),
         )
         self.projector = nn.Linear(
-            configs.d_model, configs.seq_len, bias=True
+            configs.d_model, self.seq_len, bias=True
         )
         self.classifier = nn.Linear(
-            configs.seq_len * 16, self.num_classes
+            self.seq_len * 20, self.num_classes
         )
 
     def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec, padding_mask):
         # print("shape of x_enc, x_enc_mask", x_enc.shape, x_mark_enc.shape)
         # x_enc: [B,seq_len,N]; x_enc_mask: [B,seq_len,4]
         if self.use_norm:
-            # Normalization from Non-stationary Transformer
-            means = x_enc.mean(1, keepdim=True).detach()
-            x_enc = x_enc - means
-            stdev = torch.sqrt(
-                torch.var(x_enc, dim=1, keepdim=True, unbiased=False) + 1e-5
-            )
-            x_enc /= stdev
+        # Replace zeros with NaNs
+            x_enc_nan = x_enc.clone().detach()
+            x_enc_nan[x_enc_nan == 0] = float('nan')
+
+            # Compute the mean, ignoring NaNs
+            means = torch.nanmean(x_enc_nan, dim=1, keepdim=True)
+
+            # Create a mask of non-NaN values
+            mask = torch.isfinite(x_enc_nan)
+
+            # Compute the variance, ignoring NaNs
+            diff = (x_enc_nan - means) * mask
+            var = torch.sum(diff * diff, dim=1, keepdim=True) / mask.sum(dim=1, keepdim=True)
+
+            # Compute the standard deviation
+            stdev = torch.sqrt(var + 1e-5)
+
+            # Normalize x_enc
+            x_enc = (x_enc - means) / stdev
+
+            # Replace NaNs with zeros
+            x_enc[torch.isnan(x_enc)] = 0
 
         _, L, N = x_enc.shape  # B L N
         self.seq_len = L
@@ -109,24 +130,33 @@ class Model(nn.Module):
         #         means[:, 0, :].unsqueeze(1).repeat(1, self.num_classes, 1)
         #     )
         # print("shape of dec_out after de-normalization", dec_out.shape)
-        return dec_out
+        return dec_out, attns
 
     def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
 
-        dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec, padding_mask=mask)
+        dec_out, attns = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec, padding_mask=mask)
         dec_out = dec_out.squeeze(-1)
-
+        if self.output_attention:
+            return dec_out, attns
         # return dec_out[:, -self.num_classes:, :]  # [B, L, D]
-        return dec_out
+        else:
+            return dec_out
 
-    # def reset(self, new_seq_len):
-    #     self.enc_embedding = DataEmbedding_inverted(
-    #         new_seq_len,
-    #         configs.d_model,
-    #         configs.embed,
-    #         configs.freq,
-    #         configs.dropout,
-    #     )
+    def reset(self, new_seq_len):
+        configs = self.configs
+        self.enc_embedding = DataEmbedding_inverted(
+            new_seq_len,
+            configs.d_model,
+            configs.embed,
+            configs.freq,
+            configs.dropout,
+        ).to(self.device)
+        self.projector = nn.Linear(
+            configs.d_model, self.seq_len, bias=True
+        ).to(self.device)
+        self.classifier = nn.Linear(
+            self.seq_len * 20, self.num_classes
+        ).to(self.device)
 
     # def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
     #     if self.use_norm:
