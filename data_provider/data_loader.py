@@ -821,16 +821,8 @@ class Dataset_Crop(Dataset):
                 target_values_flat = month_data_y.argmax(axis=1)
                 targets_count.append(target_values_flat[0])
                 data_x.append(month_data_x[0:seq_end])
-                # print(month_data_x[data : data + desired_length].shape)
                 data_y.append(month_data_y[0:seq_end])
-                # print(month_data_x[data:data+desired_length].shape)
-                # if len(month_data_x) < desired_length:
-                #     padding = desired_length - len(month_data_x)
-                #     month_data_x = np.pad(month_data_x, ((0, padding), (0, 0)), mode='constant')
-                #     month_data_y = np.pad(month_data_y, ((0, padding), (0, 0)), mode='constant')
-                # elif len(month_data_x) > desired_length:
-                #     month_data_x = month_data_x[:desired_length]
-                #     month_data_y = month_data_y[:desired_length]
+
 
                 df_stamp_month = group_data[["date"]][0:seq_end]
                 df_stamp_month["date"] = pd.to_datetime(
@@ -861,7 +853,6 @@ class Dataset_Crop(Dataset):
                 data_stamp.append(data_stamp_month)
 
             max_length = int(max(map(len, data_x)))
-            print(max_length)
 
             (data_x, data_y, data_stamp, masks) = pad_and_mask(
                 data_x, data_y, data_stamp, max_length
@@ -975,7 +966,6 @@ class Dataset_Crop(Dataset):
         seq_y_mark = self.data_stamp[index].copy()
         masks = self.masks[index].copy()
         seq_end_length = self.seq_end_lengths[index]
-        # columns = self.columns
         return seq_x, target, seq_x_mark, seq_y_mark, masks, seq_end_length
 
     def __len__(self):
@@ -992,6 +982,19 @@ class Dataset_Crop(Dataset):
 
 
 def pad_and_mask(sequences, labels, data_stamp, max_length, padding_value=0.0):
+    """
+    Pads sequences, labels, and data_stamp to a maximum length and creates masks.
+
+    Args:
+        sequences (list): List of sequences.
+        labels (list): List of labels.
+        data_stamp (list): List of data stamps.
+        max_length (int): Maximum length to pad sequences, labels, and data_stamp to.
+        padding_value (float, optional): Value used for padding. Defaults to 0.0.
+
+    Returns:
+        tuple: A tuple containing the padded sequences, padded labels, padded data_stamp, and masks.
+    """
 
     sequences_padded = (
         [
@@ -1026,11 +1029,6 @@ def pad_and_mask(sequences, labels, data_stamp, max_length, padding_value=0.0):
         ],
     )
 
-    # print(len(sequences_padded[0]))
-    # print(sequences_padded[0][0].shape)
-    # sequences_padded = torch.tensor(sequences_padded)
-    # labels = torch.tensor(labels_padded)
-    # data_stamp = torch.tensor(data_stamp)
     masks = []
     for s in sequences_padded:
         for t in s:
@@ -1038,68 +1036,5 @@ def pad_and_mask(sequences, labels, data_stamp, max_length, padding_value=0.0):
             mask = t != padding_value
             masks.append(mask)
 
-    # masks = [s != padding_value for s in sequences_padded]
-    # print(masks)
-    # print(len(masks))
 
     return (sequences_padded[0], labels_padded[0], data_stamp[0], masks)
-
-
-# def pad_and_mask_sequences(sequences, padding_value=0):
-#     # Pad the sequences
-#     sequences_padded = torch.nn.utils.rnn.pad_sequence(sequences, batch_first=True, padding_value=padding_value)
-
-#     # Create masks
-#     masks = (sequences_padded != padding_value).float()
-
-#     return sequences_padded, masks
-# Loop over the groups
-# todo this was for all the classes for loop
-# for (FOI_ID_LEVERANCIER, year, month), group_data in tqdm(groups):
-
-#     # Now, group_data contains the data for one 'FOI_ID_LEVERANCIER' for one month
-#     # skip januari for now since it has 16 days #TODO: fix this
-#     if month == 1:
-#         continue
-#     month_data_x = group_data[cols].values.astype(np.float64)
-#     month_data_y = group_data[self.target].values.astype(np.float64)
-
-#     target_values_flat = month_data_y.argmax(axis=1)
-#     targets_count.append(target_values_flat[0])
-#     if len(month_data_x) < desired_length:
-#         padding = desired_length - len(month_data_x)
-#         month_data_x = np.pad(month_data_x, ((0, padding), (0, 0)), mode='constant')
-#         month_data_y = np.pad(month_data_y, ((0, padding), (0, 0)), mode='constant')
-#     elif len(month_data_x) > desired_length:
-#         month_data_x = month_data_x[:desired_length]
-#         month_data_y = month_data_y[:desired_length]
-
-#     df_stamp_month = group_data[["date"]]
-#     df_stamp_month["date"] = pd.to_datetime(df_stamp_month.date)
-#     if self.timeenc == 0:
-#         df_stamp_month["month"] = df_stamp_month.date.apply(
-#             lambda row: row.month, axis=1
-#         )
-#         df_stamp_month["day"] = df_stamp_month.date.apply(lambda row: row.day, axis=1)
-#         df_stamp_month["weekday"] = df_stamp_month.date.apply(
-#             lambda row: row.weekday(), axis=1
-#         )
-#         df_stamp_month["hour"] = df_stamp_month.date.apply(
-#             lambda row: row.hour, axis=1
-#         )
-#         data_stamp_month = df_stamp_month.drop(["date"], axis=1).values
-#     elif self.timeenc == 1:
-#         data_stamp_month = time_features(
-#             pd.to_datetime(df_stamp_month["date"].values), freq=self.freq
-#         )
-#         data_stamp_month = data_stamp_month.transpose(1, 0)
-#     # Pad data_stamp_month to a size of 30
-#     if len(data_stamp_month) < desired_length:
-#         padding = desired_length - len(data_stamp_month)
-#         data_stamp_month = np.pad(data_stamp_month, ((0, padding), (0, 0)), mode='constant')
-#     elif len(data_stamp_month) > desired_length:
-#         data_stamp_month = data_stamp_month[:desired_length]
-
-#     data_x.append(month_data_x)
-#     data_y.append(month_data_y)
-#     data_stamp.append(data_stamp_month)

@@ -76,34 +76,15 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             if m.bias is not None:
                 torch.nn.init.zeros_(m.bias)
 
-    # def _write_graph(self, model, train_loader):
-    #     temp_x, temp_y, temp_x_mark, temp_y_mark, padding_mask = next(iter(train_loader))
-
-    #     # Move the data to the correct device
-    #     temp_x = temp_x.float().to(self.device)
-    #     temp_y = temp_y.float().to(self.device)
-    #     temp_x_mark = temp_x_mark.float().to(self.device)
-    #     temp_y_mark = temp_y_mark.float().to(self.device)
-    #     padding_mask = padding_mask.to(self.device)
-
-    #     # If your model is wrapped in DataParallel, access the original model with .module
-    #     original_model = self.model.module if isinstance(self.model, nn.DataParallel) else self.model
-
-    #     # Add the model graph to TensorBoard
-    #     self.writer.add_graph(original_model, [temp_x, temp_x_mark, temp_y, temp_y_mark, padding_mask])
-    #     if self.args.use_multi_gpu:
-    #         self.model = nn.DataParallel(original_model, device_ids=self.args.device_ids)
-    #         print("use multi gpu after graph writing")
-    #     return self.model
 
     def vali(self, vali_data, vali_loader, criterion):
         total_loss = []
         self.model.eval()
         class_weights = torch.from_numpy(vali_loader.dataset.class_weights)
-        # class_weights = class_weights.float().to(self.device)
         criterion = self._select_criterion(class_weights)
         dates = vali_loader.dataset.get_dates()
 
+        # Validation loop
         with torch.no_grad():
             for i, (
                 batch_x,
@@ -116,64 +97,32 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
                 class_weights = vali_loader.dataset.class_weights
-                # class_weights = class_weights.float().to(self.device)
 
                 batch_x_mark = batch_x_mark.float().to(self.device)
                 batch_y_mark = batch_y_mark.float().to(self.device)
 
-                # decoder input
-                # Decoder turned off for classification, dec_inp=batch_y
 
-                # dec_inp = torch.zeros_like(
-                #     batch_y[:, -self.args.pred_len :, :]
-                # ).float()
-                # dec_inp = (
-                #     torch.cat(
-                #         [batch_y[:, : self.args.label_len, :], dec_inp], dim=1
-                #     )
-                #     .float()
-                #     .to(self.device)
-                # )
-                # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
-                        if self.args.output_attention:
-                            outputs = self.model(
-                                batch_x, batch_x_mark, batch_y, batch_y_mark
-                            )
-                        else:
-                            outputs = self.model(
-                                batch_x, batch_x_mark, batch_y, batch_y_mark
-                            )
+                if self.args.output_attention:
+                    outputs, attns = self.model(
+                        batch_x,
+                        batch_x_mark,
+                        batch_y,
+                        batch_y_mark,
+                        padding_mask,
+                    )
                 else:
-                    if self.args.output_attention:
-                        outputs, attns = self.model(
-                            batch_x,
-                            batch_x_mark,
-                            batch_y,
-                            batch_y_mark,
-                            padding_mask,
-                        )
-                    else:
-                        outputs = self.model(
-                            batch_x,
-                            batch_x_mark,
-                            batch_y,
-                            batch_y_mark,
-                            padding_mask,
-                        )
-                f_dim = -1 if self.args.features == "MS" else 0
-                # outputs = outputs[:, -self.args.pred_len :, f_dim:]
-                # batch_y = batch_y[:, -self.args.pred_len :, f_dim:].to(
-                #     self.device
-                # )
+                    outputs = self.model(
+                        batch_x,
+                        batch_x_mark,
+                        batch_y,
+                        batch_y_mark,
+                        padding_mask,
+                    )
+
                 outputs = outputs.float()
 
                 pred = outputs
                 true = batch_y
-                # if not pred.device == self.device or not true.device == self.device:
-                #     print(pred.device, true.device)
-                #     print("Warning: pred and true are not on the same device as criterion")
                 loss = criterion(pred, true)
                 loss = loss.detach().cpu().numpy()
                 total_loss.append(loss)
@@ -184,8 +133,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         return total_loss
 
     def train(self, setting):
-        # profiler = cProfile.Profile()
-        # profiler.enable()
+        # get all data loaders
         train_data, train_loader = self._get_data(flag="train")
         vali_data, vali_loader = self._get_data(flag="val")
         test_data, test_loader = self._get_data(flag="test")
@@ -196,6 +144,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
         time_now = time.time()
 
+        # setup parameters
         train_steps = len(train_loader)
         early_stopping = EarlyStopping(
             patience=self.args.patience, verbose=True, delta=0.0001
@@ -207,23 +156,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         criterion = self._select_criterion(class_weights)
         scheduler = lr_scheduler.ExponentialLR(model_optim, gamma=0.9)
         dates = train_loader.dataset.get_dates()
-        if self.args.use_amp:
-            scaler = torch.cuda.amp.GradScaler()
+
         preds = []
         trues = []
         seq_end_lengths_list = []
         steps = 0
         self.model.apply(self._weights_init)
-        # if "All_Classes" in setting:
-        #     self.model.reset(48)
-        #     print("loading model")
-        #     print(f"{setting=}")
-        #     self.model.load_state_dict(
-        #         torch.load(
-        #             os.path.join("./checkpoints/" + setting, "checkpoint.pth")
-        #         )
-        #     )
-        # self.model = self._write_graph(self.model, train_loader)
         num_trainable_params = sum(
             p.numel() for p in self.model.parameters() if p.requires_grad
         )
@@ -245,12 +183,13 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 padding_mask,
                 seq_end_lengths,
             ) in enumerate(train_loader):
+                # reset model to correct layer size based on seq_len
                 if steps == 0:
                     new_seq_len = batch_x.size(1)
                     print(f"{new_seq_len=}")
                     self.model.reset(new_seq_len)
 
-                # for j in sequences:
+
                 iter_count += 1
                 steps += 1
                 model_optim.zero_grad()
@@ -258,91 +197,51 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                 batch_y = batch_y.float().to(self.device)
                 padding_mask = padding_mask.to("cpu")
-                if "PEMS" in self.args.data or "Solar" in self.args.data:
-                    batch_x_mark = None
-                    batch_y_mark = None
+
+                batch_x_mark = batch_x_mark.float().to(self.device)
+                batch_y_mark = batch_y_mark.float().to(self.device)
+
+
+
+
+                if self.args.output_attention:
+                    outputs, attns = self.model(
+                        batch_x,
+                        batch_x_mark,
+                        batch_y,
+                        batch_y_mark,
+                        padding_mask,
+                    )
+
                 else:
-                    batch_x_mark = batch_x_mark.float().to(self.device)
-                    batch_y_mark = batch_y_mark.float().to(self.device)
+                    outputs = self.model(
+                        batch_x,
+                        batch_x_mark,
+                        batch_y,
+                        batch_y_mark,
+                        padding_mask,
+                    )
 
-                # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
-                        if self.args.output_attention:
-                            outputs = self.model(
-                                batch_x, batch_x_mark, batch_y, batch_y_mark
-                            )[0]
-                        else:
-                            outputs = self.model(
-                                batch_x, batch_x_mark, batch_y, batch_y_mark
-                            )
 
-                        f_dim = -1 if self.args.features == "MS" else 0
-                        print("using amp")
-                        outputs = outputs[:, -self.args.pred_len :, f_dim:]
-                        batch_y = batch_y[:, -self.args.pred_len :, f_dim:].to(
-                            self.device
-                        )
-                        loss = criterion(outputs, batch_y)
-                        train_loss.append(loss.item())
-                else:
+                outputs = outputs.float()
+                loss = criterion(outputs, batch_y)
+                train_loss.append(loss.item())
 
-                    if self.args.output_attention:
-                        outputs, attns = self.model(
-                            batch_x,
-                            batch_x_mark,
-                            batch_y,
-                            batch_y_mark,
-                            padding_mask,
-                        )
-                        # self.writer.add_graph(
-                        #     self.model,
-                        #     [
-                        #         batch_x,
-                        #         batch_x_mark,
-                        #         batch_y,
-                        #         batch_y_mark,
-                        #         padding_mask,
-                        #     ],
-                        # )
-                    else:
-                        outputs = self.model(
-                            batch_x,
-                            batch_x_mark,
-                            batch_y,
-                            batch_y_mark,
-                            padding_mask,
-                        )
-                        # self.writer.add_graph(
-                        #     self.model,
-                        #     [
-                        #         batch_x,
-                        #         batch_x_mark,
-                        #         batch_y,
-                        #         batch_y_mark,
-                        #         padding_mask,
-                        #     ],
-                        # )
+                # log the loass per step to tensorboard
+                self.writer.add_scalar("Loss/train_steps", loss, steps)
 
-                    f_dim = -1 if self.args.features == "MS" else 0
-                    outputs = outputs.float()
-                    loss = criterion(outputs, batch_y)
-                    train_loss.append(loss.item())
+            	# Apply softmax to get class probabilities
+                probabilities = F.softmax(outputs, dim=1)
+                probabilities = probabilities.detach().cpu().numpy()
 
-                    # log the loass per step to tensorboard
-                    self.writer.add_scalar("Loss/train_steps", loss, steps)
+                one_hot_prob = np.eye(len(probabilities[0]))[
+                    np.argmax(probabilities[0])
+                ]
+                true = batch_y.detach().cpu().numpy()
+                preds.append(one_hot_prob)
+                trues.append(true[0])
+                seq_end_lengths_list.append(seq_end_lengths)
 
-                    probabilities = F.softmax(outputs, dim=1)
-                    probabilities = probabilities.detach().cpu().numpy()
-
-                    one_hot_prob = np.eye(len(probabilities[0]))[
-                        np.argmax(probabilities[0])
-                    ]
-                    true = batch_y.detach().cpu().numpy()
-                    preds.append(one_hot_prob)
-                    trues.append(true[0])
-                    seq_end_lengths_list.append(seq_end_lengths)
-                    # Detach and move to CPU
 
                 if (i + 1) % 100 == 0:
                     print(
@@ -361,6 +260,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                             speed, left_time
                         )
                     )
+                    # set attention in tensorboard
                     if self.args.output_attention:
                         visualize_attention(
                             attention_weights=attns,
@@ -368,6 +268,8 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                             writer=self.writer,
                             global_step=steps,
                         )
+
+                    # Get class probabilities and plot them
                     fig = plt.figure(figsize=(4, 4))
                     plt.bar(range(len(probabilities[0])), probabilities[0])
                     plt.xlabel("Classes")
@@ -384,20 +286,12 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     plt.close(fig)
                     iter_count = 0
                     time_now = time.time()
-                    # profiler.disable()
-                    # stats = pstats.Stats(profiler).sort_stats("cumtime")
-                    # stats.strip_dirs()
-                    # stats.print_stats()
-                    # stats.dump_stats("./test_results/test.prof")
 
-                if self.args.use_amp:
-                    scaler.scale(loss).backward()
-                    scaler.step(model_optim)
-                    scaler.update()
-                else:
-                    loss.backward()
-                    model_optim.step()
+
+                loss.backward()
+                model_optim.step()
                 self.writer.add_scalar("Loss/train", loss, epoch)
+                # Monitor some gradient/loss histograms with change
                 if epoch == 0:
                     weight_monitor = WeightChangeMonitor(self.model, top_k=5)
                 layers_to_monitor = weight_monitor.get_layers_to_monitor(
@@ -412,15 +306,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                         self.writer.add_histogram(
                             f"gradients/{name}", param.grad, epoch
                         )
-                # for name, param in self.model.named_parameters():
-                #     # print(name, param)
-                #     # print(i)
-                #     self.writer.add_histogram(
-                #         "Weights/" + name, param.data, epoch
-                #     )
-                #     self.writer.add_histogram(
-                #         "Gradients/" + name, param.grad, epoch
-                #     )
 
             print(
                 "Epoch: {} cost time: {}".format(
@@ -438,6 +323,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             vali_loss = self.vali(vali_data, vali_loader, criterion)
             test_loss = self.vali(test_data, test_loader, criterion)
 
+            # Add values to tensorboard
             self.writer.add_scalar("Loss/vali", vali_loss, epoch)
             self.writer.add_scalar("Loss/test", test_loss, epoch)
             # log learning rate
@@ -470,8 +356,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                     acc, prec, prec_micro, rec, rec_micro, F1, F1_micro
                 )
             )
-            # Add hyperparameters to SummaryWriter
-            # self.writer.add_hparams(vars(self.args), {})
+            # Add metrics to SummaryWriter
             self.writer.add_scalar("Accuracy", acc, epoch)
             self.writer.add_scalar("Precision", prec, epoch)
             self.writer.add_scalar("Precision_micro", prec_micro, epoch)
@@ -493,9 +378,6 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             # adjust_learning_rate(model_optim, epoch + 1, self.args)
             scheduler.step()
 
-            # get_cka(self.args, setting, self.model, train_loader, self.device, epoch)
-        # torch.cuda.empty_cache()
-        # gc.collect()
         best_model_path = path + "/" + "checkpoint.pth"
         self.model.load_state_dict(torch.load(best_model_path))
 
@@ -516,12 +398,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
             )
         preds = []
         trues = []
-        # accuracy_over_time = []
         seq_end_lengths_list = []
         dates = test_loader.dataset.get_dates()
-        # seq_end_lengths = np.load(
-        #     "/home/guilly/iTransformer/dataset/noordoostpolder/test/seq_end_lengths.npy"
-        # )
+
         folder_path = "./test_results/" + setting + "/"
         if not os.path.exists(folder_path):
             os.makedirs(folder_path)
@@ -539,83 +418,36 @@ class Exp_Long_Term_Forecast(Exp_Basic):
 
                 batch_x = batch_x.float().to(self.device)
                 batch_y = batch_y.float().to(self.device)
+                batch_x_mark = batch_x_mark.float().to(self.device)
+                batch_y_mark = batch_y_mark.float().to(self.device)
 
-                if "PEMS" in self.args.data or "Solar" in self.args.data:
-                    batch_x_mark = None
-                    batch_y_mark = None
+                if self.args.output_attention:
+                    outputs, attns = self.model(
+                        batch_x,
+                        batch_x_mark,
+                        batch_y,
+                        batch_y_mark,
+                        padding_mask,
+                    )
+
                 else:
-                    batch_x_mark = batch_x_mark.float().to(self.device)
-                    batch_y_mark = batch_y_mark.float().to(self.device)
+                    outputs = self.model(
+                        batch_x,
+                        batch_x_mark,
+                        batch_y,
+                        batch_y_mark,
+                        padding_mask,
+                    )
 
-                # decoder input
-                # dec_inp = torch.zeros_like(
-                #     batch_y[:, -self.args.pred_len :, :]
-                # ).float()
-                # dec_inp = (
-                #     torch.cat(
-                #         [batch_y[:, : self.args.label_len, :], dec_inp], dim=1
-                #     )
-                #     .float()
-                #     .to(self.device)
-                # )
-                # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
-                        if self.args.output_attention:
-                            outputs = self.model(
-                                batch_x, batch_x_mark, batch_y, batch_y_mark
-                            )
-                        else:
-                            outputs = self.model(
-                                batch_x, batch_x_mark, batch_y, batch_y_mark
-                            )
-                else:
-                    if self.args.output_attention:
-                        outputs, attns = self.model(
-                            batch_x,
-                            batch_x_mark,
-                            batch_y,
-                            batch_y_mark,
-                            padding_mask,
-                        )
-
-                    else:
-                        outputs = self.model(
-                            batch_x,
-                            batch_x_mark,
-                            batch_y,
-                            batch_y_mark,
-                            padding_mask,
-                        )
-
-                f_dim = -1 if self.args.features == "MS" else 0
-                # outputs = outputs[:, -self.args.pred_len :, f_dim:]
-                # batch_y = batch_y[:, -self.args.pred_len :, f_dim:].to(
-                #     self.device
-                # )
                 outputs = outputs.float()
                 # Apply softmax to get probabilities
                 probabilities = F.softmax(outputs, dim=1)
 
                 # Detach and move to CPU
                 probabilities = probabilities.detach().cpu().numpy()
-
-                # Get the predicted class labels by taking the argmax of the probabilities
-                # print(probabilities.shape, probabilities)
-                predictions = probabilities
-                # predictions = np.argmax(probabilities, axis=1)
                 outputs = outputs.detach().cpu().numpy()
                 batch_y = batch_y.detach().cpu().numpy()
-                # if test_data.scale and self.args.inverse:
-                #     shape = outputs.shape
-                #     outputs = test_data.inverse_transform(
-                #         outputs.squeeze(0)
-                #     ).reshape(shape)
-                #     batch_y = test_data.inverse_transform(
-                #         batch_y.squeeze(0)
-                #     ).reshape(shape)
 
-                # pred = outputs
                 true = batch_y
 
                 if i % 100 == 0:
@@ -626,13 +458,9 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                             input.squeeze(0)
                         ).reshape(shape)
                     gt = true
-                    pd = predictions
+                    pd = probabilities
                     visual(gt, pd, os.path.join(folder_path, str(i) + ".pdf"))
-                    # self.writer.add_histogram(
-                    #     "Probability Distribution",
-                    #     probabilities[0],
-                    #     global_step=i,
-                    # )
+
                 one_hot_prob = np.eye(len(probabilities[0]))[
                     np.argmax(probabilities[0])
                 ]
@@ -645,9 +473,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         trues = np.array(trues)
 
         print("test shape:", preds.shape, trues.shape)
-        # preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
-        # trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
-        # print("test shape:", preds.shape, trues.shape)
+
 
         # result save
         folder_path = "./results/" + setting + "/"
@@ -693,9 +519,7 @@ class Exp_Long_Term_Forecast(Exp_Basic):
         np.save(folder_path + "confusion_matrix.npy", conf_matrix)
         np.save(folder_path + "pred.npy", preds)
         np.save(folder_path + "true.npy", trues)
-        # disp = ConfusionMatrixDisplay(confusion_matrix=conf_matrix)
         conf_matrix.savefig(folder_path + "confusion_matrix.png")
-        # plt.savefig(folder_path + "confusion_matrix.pdf")
         plt.close()
         return
 
@@ -719,37 +543,16 @@ class Exp_Long_Term_Forecast(Exp_Basic):
                 batch_x_mark = batch_x_mark.float().to(self.device)
                 batch_y_mark = batch_y_mark.float().to(self.device)
 
-                # decoder input
-                # dec_inp = torch.zeros_like(
-                #     batch_y[:, -self.args.pred_len :, :]
-                # ).float()
-                # dec_inp = (
-                #     torch.cat(
-                #         [batch_y[:, : self.args.label_len, :], dec_inp], dim=1
-                #     )
-                #     .float()
-                #     .to(self.device)
-                # )
-                # encoder - decoder
-                if self.args.use_amp:
-                    with torch.cuda.amp.autocast():
-                        if self.args.output_attention:
-                            outputs = self.model(
-                                batch_x, batch_x_mark, batch_y, batch_y_mark
-                            )[0]
-                        else:
-                            outputs = self.model(
-                                batch_x, batch_x_mark, batch_y, batch_y_mark
-                            )
+
+                
+                if self.args.output_attention:
+                    outputs, attns = self.model(
+                        batch_x, batch_x_mark, batch_y, batch_y_mark
+                    )
                 else:
-                    if self.args.output_attention:
-                        outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark
-                        )[0]
-                    else:
-                        outputs = self.model(
-                            batch_x, batch_x_mark, batch_y, batch_y_mark
-                        )
+                    outputs = self.model(
+                        batch_x, batch_x_mark, batch_y, batch_y_mark
+                    )
                 outputs = outputs.detach().cpu().numpy()
                 if pred_data.scale and self.args.inverse:
                     shape = outputs.shape
