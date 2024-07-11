@@ -1,31 +1,24 @@
 name: iTransformer
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
 dependencies:
-  # General
-  - python=3.10
-  - ipython
   - ipykernel
-  - tqdm
-  - requests
-  - pytest
-  # PyTorch
-  - pytorch=2.1.0
-  - torchvision=0.16.0
-  - torchaudio=2.1.0
-  - pytorch-cuda=12.1
+  - ipython
   - lightning=2.1.3
-  - tensorboard
-  # Scientific
-  - numpy
-  - scipy
-  - scikit-learn
   - matplotlib
-  - pillow
-  # Tabular data
+  - numpy
   - pandas
+  - pillow
   - pyarrow
-
-
+  - pytest
+  - python=3.10
+  - pytorch-cuda=12.1
+  - pytorch=2.1.0
+  - requests
+  - scikit-learn
+  - scipy
+  - tensorboard
+  - torchaudio=2.1.0
+  - torchvision=0.16.0
+  - tqdm
+prefix: /home/guilly/miniforge3/envs/iTransformer
